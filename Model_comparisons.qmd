@@ -1,0 +1,3024 @@
+---
+title: "Model_comparisons"
+format: pdf
+editor: visual
+---
+
+## Loading in Data
+
+```{r}
+library(tidyverse)
+master_processed_data <- readRDS("master_processed_training_data.RDS")
+df.spec <- data.frame(master_processed_data$subject_specimen)
+df.ab <- master_processed_data$abtiter_wide$batchCorrected_data
+#df.ab.col <- colnames(df.ab) |> as.numeric()
+df.ab.col <- colnames(df.ab)
+df.ab <- t(data.frame(df.ab))
+rownames(df.ab) <- df.ab.col
+df.cyt <- master_processed_data$plasma_cytokine_concentrations$batchCorrected_data
+df.cyt.col <- colnames(df.cyt) 
+df.cyt <- t(data.frame(df.cyt))
+rownames(df.cyt) <- df.cyt.col
+df.cell <- master_processed_data$pbmc_cell_frequency$batchCorrected_data
+df.cell.col <- colnames(df.cell) 
+df.cell <- t(data.frame(df.cell))
+rownames(df.cell) <- df.cell.col
+df.gene <- master_processed_data$pbmc_gene_expression$batchCorrected_data
+df.gene.col <- colnames(df.gene) 
+df.gene <- t(data.frame(df.gene))
+rownames(df.gene) <- df.gene.col
+gene.names <- colnames(df.gene)
+gen.nam <- gene.names
+gene.names <- sub('ENSG','\\1',gene.names)
+which(gene.names=="00000277632.1")
+gene.names[which(gene.names=="00000277632.1")]
+X <- data.frame(df.gene) %>% dplyr::select(-ENSG00000277632.1) %>% mutate(specimen_id=as.numeric(rownames(df.gene)))
+Y <- data.frame(df.gene) %>% dplyr::select(ENSG00000277632.1) %>% mutate(specimen_id=as.numeric(rownames(df.gene)))
+specimen_id <- X$specimen_id
+X <- X %>% dplyr::select(-specimen_id)
+X <- scale(X, center=T, scale=T)
+X <- data.frame(specimen_id,X)
+colnames(Y) <- c("y", "specimen_id")
+df <- inner_join(X,Y,by="specimen_id")
+rownames(df) <- df$specimen_id
+df$specimen_id <- as.numeric(df$specimen_id)
+df.sets <- data.frame(master_processed_data$pbmc_gene_expression$metadata)
+rownames(df.sets) <- df.sets$specimen_id
+df.sets <- df.sets %>% mutate(age=interval(start=year_of_birth, end=date_of_boost)/duration(num=1, units="years"))
+df.sets <- df.sets %>% mutate(across(where(is.character), as.factor))
+#df.d3 <- df.sets %>% filter(planned_day_relative_to_boost==3)
+df.full.pred <- inner_join(df,df.sets,by="specimen_id")
+rownames(df.full.pred) <- df.full.pred$specimen_id
+#df.d3.tr <- df.d3 %>% filter(dataset != "2022_dataset")
+#df.d3.ts <- df.d3 %>% filter(dataset == "2022_dataset")
+df.sets.tr <- df.sets %>% filter(dataset != "2022_dataset")
+df.sets.ts <- df.sets %>% filter(dataset == "2022_dataset")
+# tr.set <- df.sets.tr %>% select(specimen_id)
+# ts.set <- df.sets.ts %>% select(specimen_id)
+x.rem <- c(colnames(df.sets),"y")
+subj <- unique(df.sets.tr$subject_id)
+need.to.include <- df.sets.tr %>% filter(race %in% c("American Indian/Alaska Native", "Black or African American", "Native Hawaiian or Other Pacific Islander")) %>% dplyr::select(subject_id) %>% unique() %>% as.matrix()
+#need.to.include <- df.sets.tr %>% filter(race %in% c("American Indian/Alaska Native", "Black or African American", "Native Hawaiian or Other Pacific Islander")) %>% select(subject_id) %>% unique() %>% as.matrix()
+subj.acceptable <- setdiff(subj,need.to.include)
+tr.subj <- sample(subj.acceptable,55)
+tr.subj <- append(tr.subj,need.to.include)
+ts.subj <- setdiff(subj,tr.subj)
+
+```
+
+## Data processing
+
+```{r}
+df.spec <- df.spec %>% mutate(age=interval(start=year_of_birth, end=date_of_boost)/duration(num=1, units="years"))
+df.spec <- df.spec %>% mutate(across(where(is.character), as.factor)) %>% 
+  filter(planned_day_relative_to_boost %in% c(0,1,3,7,14)) %>%
+  dplyr::select(dataset,timepoint,age,race,ethnicity,biological_sex,infancy_vac,subject_id,specimen_id)
+df.tr.time.0 <- df.spec %>% filter(subject_id %in% tr.subj)  
+df.ts.time.0 <- df.spec %>% filter(subject_id %in% ts.subj)
+tr.spec <- df.tr.time.0 %>% dplyr::select(specimen_id)
+ts.spec <- df.ts.time.0 %>% dplyr::select(specimen_id)
+saveRDS(tr.spec, file="tr_spec.rds")
+saveRDS(ts.spec, file="ts_spec.rds")
+```
+
+```{r}
+df.ab <- df.ab %>% as.data.frame() %>% mutate(specimen_id=as.numeric(rownames(df.ab))) 
+df.cyt <- df.cyt %>% as.data.frame() %>% mutate(specimen_id=as.numeric(rownames(df.cyt)))
+df.cell <- df.cell %>% as.data.frame() %>% mutate(specimen_id=as.numeric(rownames(df.cell)))
+df.gene <- df.gene %>% as.data.frame() %>% mutate(specimen_id=as.numeric(rownames(df.gene)))
+df.gene2 <- df.gene %>% as.data.frame() %>% scale(.,center=T,scale=T) %>% 
+  as.data.frame() %>% mutate(specimen_id=as.numeric(rownames(df.gene)))
+
+saveRDS(df.ab, file="df_ab.RDS")
+saveRDS(df.cyt, file="df_cyt.RDS")
+saveRDS(df.cell, file="df_cell.RDS")
+saveRDS(df.gene, file="df_gene.RDS")
+saveRDS(df.gene2, file="df_gene2.RDS")
+
+```
+
+```{r}
+# df.ab.tr <- df.ab %>% filter(specimen_id %in% tr.spec) %>% select(-specimen_id)
+# df.ab.ts <- df.ab %>% filter(specimen_id %in% ts.spec) %>% select(-specimen_id)
+# df.cyt.tr <- df.cyt %>% filter(specimen_id %in% tr.spec) %>% select(-specimen_id)
+# df.cyt.ts <- df.cyt %>% filter(specimen_id %in% ts.spec) %>% select(-specimen_id)
+# df.cell.tr <- df.cell %>% filter(specimen_id %in% tr.spec) %>% select(-specimen_id)
+# df.cell.ts <- df.cell %>% filter(specimen_id %in% ts.spec) %>% select(-specimen_id)
+# df.gene.tr <- df.gene %>% filter(specimen_id %in% tr.spec) %>% select(-specimen_id)
+# df.gene.ts <- df.gene %>% filter(specimen_id %in% ts.spec) %>% select(-specimen_id)
+```
+
+```{r}
+df.ab.tr <- df.ab %>% filter(specimen_id %in% tr.spec$specimen_id) 
+df.ab.ts <- df.ab %>% filter(specimen_id %in% ts.spec$specimen_id) 
+df.cyt.tr <- df.cyt %>% filter(specimen_id %in% tr.spec$specimen_id) 
+df.cyt.ts <- df.cyt %>% filter(specimen_id %in% ts.spec$specimen_id) 
+df.cell.tr <- df.cell %>% filter(specimen_id %in% tr.spec$specimen_id) 
+df.cell.ts <- df.cell %>% filter(specimen_id %in% ts.spec$specimen_id) 
+df.gene.tr <- df.gene %>% filter(specimen_id %in% tr.spec$specimen_id) 
+df.gene.ts <- df.gene %>% filter(specimen_id %in% ts.spec$specimen_id)
+df.spec.tr <- df.spec %>% filter(specimen_id %in% tr.spec$specimen_id)
+df.spec.ts <- df.spec %>% filter(specimen_id %in% ts.spec$specimen_id)
+Y.tr <- Y %>% filter(specimen_id %in% tr.spec$specimen_id) 
+Y.ts <- Y %>% filter(specimen_id %in% ts.spec$specimen_id)
+
+saveRDS(df.ab.tr, file="df_ab_tr.RDS")
+saveRDS(df.cyt.tr, file="df_cyt_tr.RDS")
+saveRDS(df.cell.tr, file="df_cell_tr.RDS")
+saveRDS(df.gene.tr, file="df_gene_tr.RDS")
+saveRDS(df.spec.tr, file="df_spec_tr.RDS")
+saveRDS(df.ab.ts, file="df_ab_ts.RDS")
+saveRDS(df.cyt.ts, file="df_cyt_ts.RDS")
+saveRDS(df.cell.ts, file="df_cell_ts.RDS")
+saveRDS(df.gene.ts, file="df_gene_ts.RDS")
+saveRDS(df.spec.ts, file="df_spec_ts.RDS")
+saveRDS(Y.tr, file="Y_tr.RDS")
+saveRDS(Y.ts, file="Y_ts.RDS")
+```
+
+```{r}
+df.tot.tr <- dplyr::left_join(Y.tr, df.spec.tr, by="specimen_id") %>%
+              dplyr::left_join(., df.ab.tr, by="specimen_id") %>% 
+              dplyr::left_join(., df.cyt.tr, by="specimen_id") %>%
+              dplyr::left_join(., df.cell.tr, by="specimen_id") %>%
+              dplyr::left_join(., df.gene.tr, by="specimen_id") 
+
+
+df.tot.ts <- dplyr::left_join(Y.ts, df.spec.ts, by="specimen_id") %>%
+              dplyr::left_join(., df.ab.ts, by="specimen_id") %>% 
+              dplyr::left_join(., df.cyt.ts, by="specimen_id") %>%
+              dplyr::left_join(., df.cell.ts, by="specimen_id") %>%
+              dplyr::left_join(., df.gene.ts, by="specimen_id") 
+
+```
+
+
+
+## Basic
+
+```{r}
+Y.tr.temp <- df.tot.tr %>% filter(timepoint==3) %>% dplyr::select(y,subject_id)
+X.tr.temp <- df.tot.tr %>% filter(timepoint==0) %>% mutate(CCL3=y) %>% dplyr::select(-c(y,specimen_id))
+Y.ts.temp <- df.tot.ts %>% filter(timepoint==3) %>% dplyr::select(y,subject_id)
+X.ts.temp <- df.tot.ts %>% filter(timepoint==0) %>% mutate(CCL3=y) %>% dplyr::select(-c(y,specimen_id))
+```
+
+
+```{r}
+df.basic.tr <- inner_join(Y.tr.temp,X.tr.temp,by="subject_id") %>% mutate(y=log2(y)) %>% dplyr::select(y,CCL3,dataset,age,race,ethnicity,biological_sex,infancy_vac)
+df.basic.ts <- inner_join(Y.ts.temp,X.ts.temp,by="subject_id") %>% mutate(y=log2(y)) %>% dplyr::select(y,CCL3,dataset,age,race,ethnicity,biological_sex,infancy_vac)
+```
+
+```{r}
+basic.lm.obj <- lm(y~., data=df.basic.tr)
+yhat.basic <- predict(basic.lm.obj, df.basic.ts)
+sqrt((sum((yhat.basic-df.basic.ts$y)^2))/length(df.basic.ts$y))
+```
+
+
+
+## Ridge and Lasso
+
+```{r}
+Y.tr.temp <- df.tot.tr %>% filter(timepoint==3) %>% dplyr::select(y,subject_id)
+X.tr.temp <- df.tot.tr %>% filter(timepoint==0) %>% mutate(CCL3=y) %>% dplyr::select(-c(y,specimen_id))
+Y.ts.temp <- df.tot.ts %>% filter(timepoint==3) %>% dplyr::select(y,subject_id)
+X.ts.temp <- df.tot.ts %>% filter(timepoint==0) %>% mutate(CCL3=y) %>% dplyr::select(-c(y,specimen_id))
+```
+
+```{r}
+df.ridge.tr <- inner_join(Y.tr.temp,X.tr.temp,by="subject_id") %>% mutate(y=log2(y)) %>% dplyr::select(-subject_id)
+df.ridge.ts <- inner_join(Y.ts.temp,X.ts.temp,by="subject_id") %>% mutate(y=log2(y)) %>% dplyr::select(-subject_id)
+```
+
+```{r}
+library(glmnet)
+X <- df.ridge.tr %>% dplyr::select(-y) %>% makeX(., na.impute=T)
+Y <- df.ridge.tr %>% dplyr::select(y) %>% as.matrix()
+Xts <- df.ridge.ts %>% dplyr::select(-y) %>% makeX(., na.impute=T)
+Yts <- df.ridge.ts %>% dplyr::select(y) %>% as.matrix() %>% as.vector()
+ridge.obj <- cv.glmnet(x=X,y=Y,nfolds=10,type.measure = "mse", alpha=0, nlambda=200) 
+yhat.ridge <- predict(ridge.obj, newx=Xts, s=ridge.obj$lambda.min)
+sqrt((sum((yhat.ridge-Yts)^2))/length(Yts))
+```
+
+```{r}
+lasso.obj <- cv.glmnet(x=X,y=Y,nfolds=10,type.measure = "mse", alpha=1, nlambda=200) 
+yhat.lasso <- predict(lasso.obj, newx=Xts, s=lasso.obj$lambda.min)
+sqrt((sum((yhat.lasso-Yts)^2))/length(Yts))
+```
+
+```{r}
+tr.time.0 <- df.tot.tr %>% filter(timepoint==0)
+tr.time.1 <- df.tot.tr %>% filter(timepoint==1)
+tr.time.3 <- df.tot.tr %>% filter(timepoint==3)
+ts.time.0 <- df.tot.ts %>% filter(timepoint==0)
+ts.time.1 <- df.tot.ts %>% filter(timepoint==1)
+ts.time.3 <- df.tot.ts %>% filter(timepoint==3)
+
+time <- tr.time.0 %>% dplyr::select(timepoint)
+X.0 <- tr.time.0 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+xmeans <- colMeans(X.0)
+X.0 <- t(apply(X.0, 1, function(x) x-xmeans)) %>% as.matrix()
+X.0 <- cbind(time,X.0)
+subj.0 <- tr.time.0$subject_id
+time <- ts.time.0 %>% dplyr::select(timepoint)
+Xts <- ts.time.0 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+Xts <- t(apply(Xts, 1, function(x) x-xmeans)) %>% as.matrix()
+Xts <- cbind(time,Xts) %>% as.matrix()
+Y.0 <- tr.time.0$y %>% log2(.) %>% as.matrix()
+Yts <- ts.time.3$y %>% log2(.) %>% as.matrix()
+subj.ts <- ts.time.0$subject_id
+time <- tr.time.1 %>% dplyr::select(timepoint)
+X.1 <- tr.time.1 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+X.1 <- scale(X.1, center = T, scale=F) %>% as.matrix()
+X.1 <- cbind(time,X.1)
+subj.1 <- tr.time.1$subject_id
+Y.1 <- tr.time.1$y %>% log2(.) %>% as.matrix()
+time <- tr.time.3 %>% dplyr::select(timepoint)
+X.3 <- tr.time.3 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+X.3 <- scale(X.3, center = T, scale=F) %>% as.matrix()
+X.3 <- cbind(time,X.3)
+subj.3 <- tr.time.3$subject_id
+Y.3 <- tr.time.3$y %>% log2(.) %>% as.matrix()
+
+X <- rbind(X.0,X.1,X.3) %>% as.matrix()
+Y <- rbind(Y.0,Y.1,Y.3) %>% as.matrix()
+```
+
+```{r}
+ridge.obj <- cv.glmnet(x=X,y=Y,nfolds=10,type.measure = "mse", alpha=0, nlambda=200) 
+yhat.ridge <- predict(ridge.obj, newx=Xts, s=ridge.obj$lambda.min)
+sqrt((sum((yhat.ridge-Yts)^2))/length(Yts))
+```
+```{r}
+lasso.obj <- cv.glmnet(x=X,y=Y,nfolds=10,type.measure = "mse", alpha=1, nlambda=200) 
+yhat.lasso <- predict(lasso.obj, newx=Xts, s=lasso.obj$lambda.min)
+sqrt((sum((yhat.lasso-Yts)^2))/length(Yts))
+```
+```{r}
+# X <- X[,1:11]
+# temp.names <- colnames(X)
+# temp.names <- temp.names[-1]
+# df.temp <- data.frame(Y,X)
+# turbo <- model.matrix(Y~timepoint*(.),data=df.temp)
+```
+
+```{r}
+df.tr.temp <- data.frame(Y,X)
+temp.names <- colnames(df.tr.temp)
+formula.mat <- model.matrix(Y~timepoint*(.),data=df.tr.temp)
+ridge.obj <- cv.glmnet(x=formula.mat,y=Y,nfolds=10,type.measure = "mse", alpha=0, nlambda=200) 
+df.ts.temp <- data.frame(Yts,Xts)
+colnames(df.ts.temp) <- temp.names
+#ormula.mat <- model.matrix(Y~timepoint*(.),data=df.ts.temp)
+formula.mat.ts <- model.matrix(Y~timepoint*(.),data=df.ts.temp)
+yhat.ridge <- predict(ridge.obj, newx=formula.mat.ts, s=ridge.obj$lambda.min)
+sqrt((sum((yhat.ridge-Yts)^2))/length(Yts))
+```
+
+```{r}
+df.tr.temp <- data.frame(Y,X)
+temp.names <- colnames(df.tr.temp)
+formula.mat <- model.matrix(Y~timepoint*(.),data=df.tr.temp)
+lasso.obj <- cv.glmnet(x=formula.mat,y=Y,nfolds=10,type.measure = "mse", alpha=1, nlambda=200) 
+df.ts.temp <- data.frame(Yts,Xts)
+colnames(df.ts.temp) <- temp.names
+#ormula.mat <- model.matrix(Y~timepoint*(.),data=df.ts.temp)
+formula.mat.ts <- model.matrix(Y~timepoint*(.),data=df.ts.temp)
+yhat.lasso <- predict(lasso.obj, newx=formula.mat.ts, s=lasso.obj$lambda.min)
+sqrt((sum((yhat.lasso-Yts)^2))/length(Yts))
+```
+
+```{r}
+tr.time.0 <- df.tot.tr %>% filter(timepoint==0)
+tr.time.1 <- df.tot.tr %>% filter(timepoint==1)
+tr.time.3 <- df.tot.tr %>% filter(timepoint==3)
+tr.time.7 <- df.tot.tr %>% filter(timepoint==7)
+tr.time.14 <- df.tot.tr %>% filter(timepoint==14)
+ts.time.0 <- df.tot.ts %>% filter(timepoint==0)
+ts.time.1 <- df.tot.ts %>% filter(timepoint==1)
+ts.time.3 <- df.tot.ts %>% filter(timepoint==3)
+ts.time.7 <- df.tot.ts %>% filter(timepoint==7)
+ts.time.14 <- df.tot.ts %>% filter(timepoint==14)
+
+time <- tr.time.0 %>% dplyr::select(timepoint)
+X.0 <- tr.time.0 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+xmeans <- colMeans(X.0)
+X.0 <- t(apply(X.0, 1, function(x) x-xmeans)) %>% as.matrix()
+X.0 <- cbind(time,X.0)
+subj.0 <- tr.time.0$subject_id
+time <- ts.time.0 %>% dplyr::select(timepoint)
+Xts <- ts.time.0 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+Xts <- t(apply(Xts, 1, function(x) x-xmeans)) %>% as.matrix()
+Xts <- cbind(time,Xts) %>% as.matrix()
+Y.0 <- tr.time.0$y %>% log2(.) %>% as.matrix()
+Yts <- ts.time.3$y %>% log2(.) %>% as.matrix()
+subj.ts <- ts.time.0$subject_id
+time <- tr.time.1 %>% dplyr::select(timepoint)
+X.1 <- tr.time.1 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+X.1 <- scale(X.1, center = T, scale=F) %>% as.matrix()
+X.1 <- cbind(time,X.1)
+subj.1 <- tr.time.1$subject_id
+Y.1 <- tr.time.1$y %>% log2(.) %>% as.matrix()
+time <- tr.time.3 %>% dplyr::select(timepoint)
+X.3 <- tr.time.3 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+X.3 <- scale(X.3, center = T, scale=F) %>% as.matrix()
+X.3 <- cbind(time,X.3)
+subj.3 <- tr.time.3$subject_id
+Y.3 <- tr.time.3$y %>% log2(.) %>% as.matrix()
+
+time <- tr.time.7 %>% dplyr::select(timepoint)
+X.7 <- tr.time.7 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+X.7 <- scale(X.7, center = T, scale=F) %>% as.matrix()
+X.7 <- cbind(time,X.7)
+subj.7 <- tr.time.7$subject_id
+Y.7 <- tr.time.7$y %>% log2(.) %>% as.matrix()
+
+time <- tr.time.14 %>% dplyr::select(timepoint)
+X.14 <- tr.time.14 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+X.14 <- scale(X.14, center = T, scale=F) %>% as.matrix()
+X.14 <- cbind(time,X.14)
+subj.14 <- tr.time.14$subject_id
+Y.14 <- tr.time.14$y %>% log2(.) %>% as.matrix()
+
+X <- rbind(X.0,X.1,X.3,X.7,X.14) %>% as.matrix()
+Y <- rbind(Y.0,Y.1,Y.3,Y.7,Y.14) %>% as.matrix()
+```
+
+```{r}
+ridge.obj <- cv.glmnet(x=X,y=Y,nfolds=10,type.measure = "mse", alpha=0, nlambda=200) 
+yhat.ridge <- predict(ridge.obj, newx=Xts, s=ridge.obj$lambda.min)
+sqrt((sum((yhat.ridge-Yts)^2))/length(Yts))
+```
+
+```{r}
+lasso.obj <- cv.glmnet(x=X,y=Y,nfolds=10,type.measure = "mse", alpha=1, nlambda=200) 
+yhat.lasso <- predict(lasso.obj, newx=Xts, s=lasso.obj$lambda.min)
+sqrt((sum((yhat.lasso-Yts)^2))/length(Yts))
+```
+
+```{r}
+# X <- X[,1:11]
+# temp.names <- colnames(X)
+# temp.names <- temp.names[-1]
+# df.temp <- data.frame(Y,X)
+# turbo <- model.matrix(Y~timepoint*(.),data=df.temp)
+```
+
+```{r}
+df.tr.temp <- data.frame(Y,X)
+temp.names <- colnames(df.tr.temp)
+formula.mat <- model.matrix(Y~timepoint*(.),data=df.tr.temp)
+ridge.obj <- cv.glmnet(x=formula.mat,y=Y,nfolds=10,type.measure = "mse", alpha=0, nlambda=200) 
+df.ts.temp <- data.frame(Yts,Xts)
+colnames(df.ts.temp) <- temp.names
+#ormula.mat <- model.matrix(Y~timepoint*(.),data=df.ts.temp)
+formula.mat.ts <- model.matrix(Y~timepoint*(.),data=df.ts.temp)
+yhat.ridge <- predict(ridge.obj, newx=formula.mat.ts, s=ridge.obj$lambda.min)
+sqrt((sum((yhat.ridge-Yts)^2))/length(Yts))
+```
+
+```{r}
+df.tr.temp <- data.frame(Y,X)
+temp.names <- colnames(df.tr.temp)
+formula.mat <- model.matrix(Y~timepoint*(.),data=df.tr.temp)
+lasso.obj <- cv.glmnet(x=formula.mat,y=Y,nfolds=10,type.measure = "mse", alpha=1, nlambda=200) 
+df.ts.temp <- data.frame(Yts,Xts)
+colnames(df.ts.temp) <- temp.names
+#ormula.mat <- model.matrix(Y~timepoint*(.),data=df.ts.temp)
+formula.mat.ts <- model.matrix(Y~timepoint*(.),data=df.ts.temp)
+yhat.lasso <- predict(lasso.obj, newx=formula.mat.ts, s=lasso.obj$lambda.min)
+sqrt((sum((yhat.lasso-Yts)^2))/length(Yts))
+```
+
+
+## PLS LM
+
+```{r}
+library(mixOmics)
+```
+
+```{r}
+Y.tr.temp <- df.tot.tr %>% filter(timepoint==3) %>% dplyr::select(y,subject_id)
+X.tr.temp <- df.tot.tr %>% filter(timepoint==0) %>% mutate(CCL3=y) %>% dplyr::select(-c(y,specimen_id))
+Y.ts.temp <- df.tot.ts %>% filter(timepoint==3) %>% dplyr::select(y,subject_id)
+X.ts.temp <- df.tot.ts %>% filter(timepoint==0) %>% mutate(CCL3=y) %>% dplyr::select(-c(y,specimen_id))
+
+df.pls.tr <- inner_join(Y.tr.temp,X.tr.temp,by="subject_id") %>% mutate(y=log2(y)) %>% dplyr::select(-subject_id)
+df.pls.ts <- inner_join(Y.ts.temp,X.ts.temp,by="subject_id") %>% mutate(y=log2(y)) %>% dplyr::select(-subject_id)
+
+pred.names <- append(gen.nam, "CCL3")
+
+X <- df.pls.tr %>% dplyr::select(all_of(pred.names)) %>% as.matrix()
+Y <- df.pls.tr %>% dplyr::select(y) %>% as.matrix() %>% as.vector()
+Xts <- df.pls.ts %>% dplyr::select(all_of(pred.names)) %>% as.matrix()
+Yts <- df.pls.ts %>% dplyr::select(y) %>% as.matrix() %>% as.vector()
+```
+
+```{r}
+ridge.gene.obj <- cv.glmnet(x=X,y=Y,nfolds=10,type.measure = "mse", alpha=0, nlambda=200) 
+yhat.ridge <- predict(ridge.gene.obj, newx=Xts, s=ridge.gene.obj$lambda.min)
+sqrt((sum((yhat.ridge-Yts)^2))/length(Yts))
+lasso.gene.obj <- cv.glmnet(x=X,y=Y,nfolds=10,type.measure = "mse", alpha=1, nlambda=200) 
+yhat.lasso <- predict(lasso.gene.obj, newx=Xts, s=lasso.gene.obj$lambda.min)
+sqrt((sum((yhat.lasso-Yts)^2))/length(Yts))
+```
+```{r}
+df.gene2.tr <- df.gene2 %>% filter(specimen_id %in% tr.spec$specimen_id) 
+df.gene2.ts <- df.gene2 %>% filter(specimen_id %in% ts.spec$specimen_id)
+
+df.tot2.tr <- dplyr::left_join(Y.tr, df.spec.tr, by="specimen_id") %>%
+              dplyr::left_join(., df.ab.tr, by="specimen_id") %>% 
+              dplyr::left_join(., df.cyt.tr, by="specimen_id") %>%
+              dplyr::left_join(., df.cell.tr, by="specimen_id") %>%
+              dplyr::left_join(., df.gene2.tr, by="specimen_id") 
+
+
+df.tot2.ts <- dplyr::left_join(Y.ts, df.spec.ts, by="specimen_id") %>%
+              dplyr::left_join(., df.ab.ts, by="specimen_id") %>% 
+              dplyr::left_join(., df.cyt.ts, by="specimen_id") %>%
+              dplyr::left_join(., df.cell.ts, by="specimen_id") %>%
+              dplyr::left_join(., df.gene2.ts, by="specimen_id") 
+
+Y.tr.temp <- df.tot2.tr %>% filter(timepoint==3) %>% dplyr::select(y,subject_id)
+X.tr.temp <- df.tot2.tr %>% filter(timepoint==0) %>% mutate(CCL3=y) %>% dplyr::select(-c(y,specimen_id))
+Y.ts.temp <- df.tot2.ts %>% filter(timepoint==3) %>% dplyr::select(y,subject_id)
+X.ts.temp <- df.tot2.ts %>% filter(timepoint==0) %>% mutate(CCL3=y) %>% dplyr::select(-c(y,specimen_id))
+
+df.pls.tr <- inner_join(Y.tr.temp,X.tr.temp,by="subject_id") %>% mutate(y=log2(y)) 
+df.pls.ts <- inner_join(Y.ts.temp,X.ts.temp,by="subject_id") %>% mutate(y=log2(y)) 
+
+subj.id.pls.tr <- df.pls.tr$subject_id
+subj.id.pls.ts <- df.pls.ts$subject_id
+
+X <- df.pls.tr %>% dplyr::select(all_of(pred.names)) %>% as.matrix()
+Y <- df.pls.tr %>% dplyr::select(y) %>% as.matrix() %>% as.vector()
+Xts <- df.pls.ts %>% dplyr::select(all_of(pred.names)) %>% as.matrix()
+Yts <- df.pls.ts %>% dplyr::select(y) %>% as.matrix() %>% as.vector()
+
+
+```
+
+```{r}
+x.cols <- colnames(X)
+xmeans <- colMeans(X)
+X <- t(apply(X, 1, function(x) x-xmeans))
+Xts <- t(apply(Xts, 1, function(x) x-xmeans))
+```
+
+```{r}
+plsr.obj <- pls(X=X,Y=Y,ncomp=20, scale=F, mode="regression")
+Z <- X%*%as.matrix(plsr.obj$loadings$X)
+z <- Xts%*%as.matrix(plsr.obj$loadings$X)
+Z.df <- data.frame(Y,Z)
+z.df <- data.frame(Yts,z)
+plsr.lm <- lm(Y~., data=Z.df)
+yhat.plsr <- predict(plsr.lm, z.df)
+sqrt((sum((yhat.plsr-Yts)^2))/length(Yts))
+```
+
+
+```{r}
+Z <- X%*%as.matrix(plsr.obj$loadings$X)
+z <- Xts%*%as.matrix(plsr.obj$loadings$X)
+Z.df <- data.frame(Y,Z)
+z.df <- data.frame(Yts,z)
+colnames(z.df)[1] <- "Y"
+Z.df$subject_id <- subj.id.pls.tr
+z.df$subject_id <- subj.id.pls.ts
+new.preds <- colnames(Z.df) %>% append(.,c("age", "race", "ethnicity", "biological_sex", "infancy_vac"))
+temp.tr <- df.pls.tr %>% dplyr::select(-y)
+Z2.df <- dplyr::left_join(Z.df, temp.tr, by="subject_id") %>% dplyr::select(all_of(new.preds))
+temp.ts <- df.pls.ts %>% dplyr::select(-y)
+z2.df <- dplyr::left_join(z.df, temp.ts, by="subject_id") %>% dplyr::select(all_of(new.preds))
+
+plsr.plus.lm <- lm(Y~., data=Z2.df)
+yhat.plsr <- predict(plsr.plus.lm, z2.df)
+sqrt((sum((yhat.plsr-Yts)^2))/length(Yts))
+```
+## LMM eval functions
+
+```{r}
+ylmepred <- function (lmeObject, newdata, timeVar, times = NULL, M = 200L, 
+  interval = c("confidence", "prediction"), all_times = FALSE, 
+  level = 0.95, return_data = FALSE, seed = 1L) 
+{
+  if (!inherits(lmeObject, "lme") && !inherits(lmeObject, 
+    "lmeComponents")) 
+    stop("Use only with 'lme' or 'lmeComponents' objects.\n")
+  interval <- match.arg(interval)
+  if (inherits(lmeObject, "lme")) {
+    data <- lmeObject$data
+    formYx <- formula(lmeObject)
+    mfX <- model.frame(terms(formYx), data = data)
+    TermsX <- attr(mfX, "terms")
+    formYz <- formula(lmeObject$modelStruct$reStruct[[1]])
+    mfZ <- model.frame(terms(formYz), data = data)
+    TermsZ <- attr(mfZ, "terms")
+    idVar <- names(lmeObject$modelStruct$reStruct)
+    betas <- fixef(lmeObject)
+    sigma <- lmeObject$sigma
+    D <- lapply(pdMatrix(lmeObject$modelStruct$reStruct), 
+      "*", sigma^2)[[1]]
+    V <- vcov(lmeObject)
+    times_orig <- data[[timeVar]]
+    times_orig <- times_orig[!is.na(times_orig)]
+  }
+  else {
+    formYx <- lmeObject$formYx
+    TermsX <- lmeObject$TermsX
+    formYz <- lmeObject$formYz
+    TermsZ <- lmeObject$TermsZ
+    idVar <- lmeObject$idVar
+    betas <- lmeObject$betas
+    sigma <- lmeObject$sigma
+    D <- lmeObject$D
+    V <- lmeObject$V
+    times_orig <- lmeObject$times_orig
+  }
+  all_vars <- unique(c(all.vars(TermsX), all.vars(TermsZ)))
+  newdata_nomiss <- newdata[complete.cases(newdata[all_vars]), 
+    ]
+  mfX_new <- model.frame(TermsX, data = newdata_nomiss)
+  X_new <- model.matrix(formYx, mfX_new)
+  mfZ_new <- model.frame(TermsZ, data = newdata_nomiss)
+  Z_new <- model.matrix(formYz, mfZ_new)
+  na_ind <- attr(mfX_new, "na.action")
+  y_new <- model.response(mfX_new, "numeric")
+  if (length(idVar) > 1) 
+    stop("the current version of the function only works with a single grouping variable.\n")
+  if (is.null(newdata[[idVar]])) 
+    stop("subject id variable not in newdata.")
+  id_nomiss <- match(newdata_nomiss[[idVar]], unique(newdata_nomiss[[idVar]]))
+  n <- length(unique(id_nomiss))
+  modes <- matrix(0, n, ncol(Z_new))
+  post_vars <- DZtVinv <- vector("list", n)
+  for (i in seq_len(n)) {
+    id_i <- id_nomiss == i
+    X_new_id <- X_new[id_i, , drop = FALSE]
+    Z_new_id <- Z_new[id_i, , drop = FALSE]
+    Vi_inv <- solve(Z_new_id %*% tcrossprod(D, Z_new_id) + 
+      sigma^2 * diag(sum(id_i)))
+    DZtVinv[[i]] <- tcrossprod(D, Z_new_id) %*% Vi_inv
+    modes[i, ] <- c(DZtVinv[[i]] %*% (y_new[id_i] - X_new_id %*% 
+      betas))
+    t1 <- DZtVinv[[i]] %*% Z_new_id %*% D
+    t2 <- DZtVinv[[i]] %*% X_new_id %*% V %*% crossprod(X_new_id, 
+      Vi_inv) %*% Z_new_id %*% D
+    post_vars[[i]] <- D - t1 + t2
+  }
+  fitted_y <- c(X_new %*% betas) + rowSums(Z_new * modes[id_nomiss, 
+    , drop = FALSE])
+  if (is.null(times) || !is.numeric(times)) {
+    times <- seq(min(times_orig), max(times_orig), length.out = 100)
+  }
+  id <- match(newdata[[idVar]], unique(newdata[[idVar]]))
+  last_time <- tapply(newdata[[timeVar]], id, max)
+  times_to_pred <- lapply(last_time, function(t) if (all_times) 
+    times
+  else times[times > t])
+  id_pred <- rep(seq_len(n), sapply(times_to_pred, length))
+  newdata_pred <- right_rows(newdata, newdata[[timeVar]], 
+    id, times_to_pred)
+  newdata_pred[[timeVar]] <- unlist(times_to_pred)
+  mfX_new_pred <- model.frame(TermsX, data = newdata_pred, 
+    na.action = NULL)
+  X_new_pred <- model.matrix(formYx, mfX_new_pred)
+  mfZ_new_pred <- model.frame(TermsZ, data = newdata_pred, 
+    na.action = NULL)
+  Z_new_pred <- model.matrix(formYz, mfZ_new_pred)
+  predicted_y <- c(X_new_pred %*% betas) + rowSums(Z_new_pred * 
+    modes[id_pred, , drop = FALSE])
+  return(list(fit=fitted_y, pred=predicted_y))
+}
+
+right_rows <- function (data, times, ids, Q_points) {
+    fids <- factor(ids, levels = unique(ids))
+    if (!is.list(Q_points))
+        Q_points <- split(Q_points, row(Q_points))
+    ind <- mapply(findInterval, Q_points, split(times, fids))
+    ind[ind < 1] <- 1
+    rownams_id <- split(row.names(data), fids)
+    ind <- mapply(`[`, rownams_id, split(ind, col(ind)))
+    data[c(ind), ]
+}
+
+saveRDS(ylmepred, file="ylmepred.RDS")
+saveRDS(right_rows, file="right_rows.RDS")
+```
+
+
+## LMM PLSR
+
+```{r}
+df.gene2.tr <- df.gene2 %>% filter(specimen_id %in% tr.spec$specimen_id) 
+df.gene2.ts <- df.gene2 %>% filter(specimen_id %in% ts.spec$specimen_id)
+
+df.tot2.tr <- dplyr::left_join(Y.tr, df.spec.tr, by="specimen_id") %>%
+              dplyr::left_join(., df.ab.tr, by="specimen_id") %>% 
+              dplyr::left_join(., df.cyt.tr, by="specimen_id") %>%
+              dplyr::left_join(., df.cell.tr, by="specimen_id") %>%
+              dplyr::left_join(., df.gene2.tr, by="specimen_id") 
+
+
+df.tot2.ts <- dplyr::left_join(Y.ts, df.spec.ts, by="specimen_id") %>%
+              dplyr::left_join(., df.ab.ts, by="specimen_id") %>% 
+              dplyr::left_join(., df.cyt.ts, by="specimen_id") %>%
+              dplyr::left_join(., df.cell.ts, by="specimen_id") %>%
+              dplyr::left_join(., df.gene2.ts, by="specimen_id") 
+
+
+tr.time.0 <- df.tot2.tr %>% filter(timepoint==0)
+tr.time.1 <- df.tot2.tr %>% filter(timepoint==1)
+tr.time.3 <- df.tot2.tr %>% filter(timepoint==3)
+ts.time.0 <- df.tot2.ts %>% filter(timepoint==0)
+ts.time.1 <- df.tot2.ts %>% filter(timepoint==1)
+ts.time.3 <- df.tot2.ts %>% filter(timepoint==3)
+
+X.0 <- tr.time.0 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+xmeans <- colMeans(X.0)
+X.0 <- t(apply(X.0, 1, function(x) x-xmeans)) %>% as.matrix()
+subj.0 <- tr.time.0$subject_id
+Xts <- ts.time.0 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+Xts <- t(apply(Xts, 1, function(x) x-xmeans)) %>% as.matrix()
+Y.0 <- tr.time.0$y %>% log2(.) %>% as.matrix()
+Yts <- ts.time.3$y %>% log2(.) %>% as.matrix()
+subj.ts <- ts.time.0$subject_id 
+X.1 <- tr.time.1 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+X.1 <- scale(X.1, center = T, scale=F) %>% as.matrix()
+subj.1 <- tr.time.1$subject_id
+Y.1 <- tr.time.1$y %>% log2(.) %>% as.matrix()
+X.3 <- tr.time.3 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+X.3 <- scale(X.3, center = T, scale=F) %>% as.matrix()
+subj.3 <- tr.time.3$subject_id
+Y.3 <- tr.time.3$y %>% log2(.) %>% as.matrix()
+```
+
+```{r}
+n.comp <- 20
+plsr.obj.0 <- pls(X=X.0,Y=Y.3,ncomp=n.comp, scale=F, mode="regression")
+plsr.obj.1 <- pls(X=X.1,Y=Y.3,ncomp=n.comp, scale=F, mode="regression")
+plsr.obj.3 <- pls(X=X.3,Y=Y.3,ncomp=n.comp, scale=F, mode="regression")
+```
+
+```{r}
+Z.0 <- as.matrix(X.0)%*%as.matrix(plsr.obj.0$loadings$X)
+time.0 <- data.frame(Y.0,Z.0)
+colnames(time.0) <- c("y", paste0("z",1:n.comp))
+time.0$subject_id <- subj.0
+time.0$time <- 0
+Z.1 <- as.matrix(X.1)%*%as.matrix(plsr.obj.1$loadings$X)
+time.1 <- data.frame(Y.1,Z.1)
+colnames(time.1) <- c("y", paste0("z",1:n.comp))
+time.1$subject_id <- subj.1
+time.1$time <- 1
+Z.3 <- as.matrix(X.3)%*%as.matrix(plsr.obj.3$loadings$X)
+time.3 <- data.frame(Y.3,Z.3)
+colnames(time.3) <- c("y", paste0("z",1:n.comp))
+time.3$subject_id <- subj.3
+time.3$time <- 3
+z.tr <- rbind(time.0,time.1,time.3)
+z.tr$subject_id <- as.factor(z.tr$subject_id)
+
+z.0 <- as.matrix(Xts)%*%as.matrix(plsr.obj.0$loadings$X)
+time.ts <- data.frame(Yts,z.0)
+colnames(time.ts) <- c("y", paste0("z",1:n.comp))
+time.ts$subject_id <- subj.ts
+time.ts$time <- 0
+# Z.3 <- as.matrix(X.3)%*%as.matrix(plsr.obj.3$loadings$X)
+# time.3 <- data.frame(Y.3,Z.3)
+# colnames(time.3) <- c("y", paste0("z",1:10))
+```
+
+
+```{r}
+df.temp <- z.tr %>% dplyr::select(-c(subject_id,time))
+pca.lm <- lm(y~.,data=df.temp)
+df.temp <- time.ts %>% dplyr::select(-c(subject_id,time))
+yhat <- predict(pca.lm, df.temp)
+sqrt((sum((z.tr$y-yhat)^2))/length(z.tr$y))
+```
+```{r}
+df.temp <- z.tr %>% dplyr::select(-c(subject_id))
+pca.lm <- lm(y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    z11 + z12 + z13 + z14 + z15 +
+    z16 + z17 + z18 + z19 + z20 +
+    time*(z1+z2+z3+z4+z5+z6+z7+z8+z9+z10+
+            z11+z12+z13+z14+z15),
+    data=df.temp)
+
+df.temp <- time.ts %>% dplyr::select(-c(subject_id))
+yhat <- predict(pca.lm, df.temp)
+sqrt((sum((z.tr$y-yhat)^2))/length(z.tr$y))
+```
+```{r}
+df.temp <- z.tr %>% dplyr::select(-c(subject_id))
+pca.lm <- lm(y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10,
+    data=df.temp)
+
+df.temp <- time.ts %>% dplyr::select(-c(subject_id))
+yhat <- predict(pca.lm, df.temp)
+sqrt((sum((z.tr$y-yhat)^2))/length(z.tr$y))
+```
+```{r}
+df.temp <- z.tr %>% dplyr::select(-c(subject_id))
+pca.lm <- lm(y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    z11 + z12 + z13 + z14 + z15 +
+    z16 + z17 + z18 + z19 + z20 +
+    z21 + z22 + z23 + z24 + z25 +
+    time*(z1+z2+z3+z4+z5+z6+z7+z8+z9+z10+
+            z11+z12+z13+z14+z15+z16+z17+
+            z18+z19+z20),
+    data=df.temp)
+
+df.temp <- time.ts %>% dplyr::select(-c(subject_id))
+yhat <- predict(pca.lm, df.temp)
+sqrt((sum((z.tr$y-yhat)^2))/length(z.tr$y))
+```
+
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    z11 + z12 + z13 + z14 + z15 +
+    z16 + z17 + z18 + z19 + z20 +
+    time*(z1+z2+z3+z4+z5+z6+z7+z8+z9+z10+
+            z11+z12+z13+z14+z15),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    z11 + z12 + z13 + z14 + z15 +
+    time*(z1+z2+z3+z4+z5+z6+z7+z8+z9+z10+
+            z11+z12+z13+z14+z15),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    z11 + z12 + z13 + z14 + z15 +
+    time*(z1+z2+z3+z4+z5+z6+z7+z8+z9+z10),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    time*(z1+z2+z3+z4+z5+z6+z7+z8+z9+z10),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    time*(z1+z2+z3+z4+z5),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    time*(z1+z2+z3+z4),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    time*(z1+z2+z3),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    time*(z1+z2),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    time*(z1),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + 
+    time*(z1+z2+z3+z4+z5),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + 
+    time*(z1+z2),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + 
+    time*(z1),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+```{r}
+n.comp <- 30
+df.gene2.tr <- df.gene2 %>% filter(specimen_id %in% tr.spec$specimen_id) 
+df.gene2.ts <- df.gene2 %>% filter(specimen_id %in% ts.spec$specimen_id)
+
+df.tot2.tr <- dplyr::left_join(Y.tr, df.spec.tr, by="specimen_id") %>%
+              dplyr::left_join(., df.ab.tr, by="specimen_id") %>% 
+              dplyr::left_join(., df.cyt.tr, by="specimen_id") %>%
+              dplyr::left_join(., df.cell.tr, by="specimen_id") %>%
+              dplyr::left_join(., df.gene2.tr, by="specimen_id") 
+
+
+df.tot2.ts <- dplyr::left_join(Y.ts, df.spec.ts, by="specimen_id") %>%
+              dplyr::left_join(., df.ab.ts, by="specimen_id") %>% 
+              dplyr::left_join(., df.cyt.ts, by="specimen_id") %>%
+              dplyr::left_join(., df.cell.ts, by="specimen_id") %>%
+              dplyr::left_join(., df.gene2.ts, by="specimen_id") 
+
+
+tr.time.0 <- df.tot2.tr %>% filter(timepoint==0)
+tr.time.1 <- df.tot2.tr %>% filter(timepoint==1)
+tr.time.3 <- df.tot2.tr %>% filter(timepoint==3)
+tr.time.7 <- df.tot2.tr %>% filter(timepoint==7)
+tr.time.14 <- df.tot2.tr %>% filter(timepoint==14)
+ts.time.0 <- df.tot2.ts %>% filter(timepoint==0)
+ts.time.1 <- df.tot2.ts %>% filter(timepoint==1)
+ts.time.3 <- df.tot2.ts %>% filter(timepoint==3)
+ts.time.7 <- df.tot2.ts %>% filter(timepoint==7)
+ts.time.14 <- df.tot2.ts %>% filter(timepoint==14)
+
+X.0 <- tr.time.0 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+xmeans <- colMeans(X.0)
+X.0 <- t(apply(X.0, 1, function(x) x-xmeans)) %>% as.matrix()
+subj.0 <- tr.time.0$subject_id
+Xts <- ts.time.0 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+Xts <- t(apply(Xts, 1, function(x) x-xmeans)) %>% as.matrix()
+Y.0 <- tr.time.0$y %>% log2(.) %>% as.matrix()
+Yts <- ts.time.3$y %>% log2(.) %>% as.matrix()
+subj.ts <- ts.time.0$subject_id 
+X.1 <- tr.time.1 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+X.1 <- scale(X.1, center = T, scale=F) %>% as.matrix()
+subj.1 <- tr.time.1$subject_id
+Y.1 <- tr.time.1$y %>% log2(.) %>% as.matrix()
+X.3 <- tr.time.3 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+X.3 <- scale(X.3, center = T, scale=F) %>% as.matrix()
+subj.3 <- tr.time.3$subject_id
+Y.3 <- tr.time.3$y %>% log2(.) %>% as.matrix()
+X.7 <- tr.time.7 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+X.7 <- scale(X.7, center = T, scale=F) %>% as.matrix()
+subj.7 <- tr.time.7$subject_id
+Y.7 <- tr.time.7$y %>% log2(.) %>% as.matrix()
+X.14 <- tr.time.14 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+X.14 <- scale(X.14, center = T, scale=F) %>% as.matrix()
+subj.14 <- tr.time.14$subject_id
+Y.14 <- tr.time.14$y %>% log2(.) %>% as.matrix()
+
+n.comp <- 20
+plsr.obj.0 <- pls(X=X.0,Y=Y.3,ncomp=n.comp, scale=F, mode="regression")
+plsr.obj.1 <- pls(X=X.1,Y=Y.3,ncomp=n.comp, scale=F, mode="regression")
+plsr.obj.3 <- pls(X=X.3,Y=Y.3,ncomp=n.comp, scale=F, mode="regression")
+plsr.obj.7 <- pls(X=X.7,Y=Y.3,ncomp=n.comp, scale=F, mode="regression")
+plsr.obj.14 <- pls(X=X.14,Y=Y.3,ncomp=n.comp, scale=F, mode="regression")
+
+Z.0 <- as.matrix(X.0)%*%as.matrix(plsr.obj.0$loadings$X)
+time.0 <- data.frame(Y.0,Z.0)
+colnames(time.0) <- c("y", paste0("z",1:n.comp))
+time.0$subject_id <- subj.0
+time.0$time <- 0
+Z.1 <- as.matrix(X.1)%*%as.matrix(plsr.obj.1$loadings$X)
+time.1 <- data.frame(Y.1,Z.1)
+colnames(time.1) <- c("y", paste0("z",1:n.comp))
+time.1$subject_id <- subj.1
+time.1$time <- 1
+Z.3 <- as.matrix(X.3)%*%as.matrix(plsr.obj.3$loadings$X)
+time.3 <- data.frame(Y.3,Z.3)
+colnames(time.3) <- c("y", paste0("z",1:n.comp))
+time.3$subject_id <- subj.3
+time.3$time <- 3
+Z.7 <- as.matrix(X.7)%*%as.matrix(plsr.obj.7$loadings$X)
+time.7 <- data.frame(Y.7,Z.7)
+colnames(time.7) <- c("y", paste0("z",1:n.comp))
+time.7$subject_id <- subj.7
+time.7$time <- 7
+Z.14 <- as.matrix(X.14)%*%as.matrix(plsr.obj.14$loadings$X)
+time.14 <- data.frame(Y.14,Z.14)
+colnames(time.14) <- c("y", paste0("z",1:n.comp))
+time.14$subject_id <- subj.14
+time.14$time <- 14
+z.tr <- rbind(time.0,time.1,time.3,time.7,time.14)
+z.tr$subject_id <- as.factor(z.tr$subject_id)
+
+z.0 <- as.matrix(Xts)%*%as.matrix(plsr.obj.0$loadings$X)
+time.ts <- data.frame(Yts,z.0)
+colnames(time.ts) <- c("y", paste0("z",1:n.comp))
+time.ts$subject_id <- subj.ts
+time.ts$time <- 0
+```
+
+```{r}
+df.temp <- z.tr %>% dplyr::select(-c(subject_id,time))
+pca.lm <- lm(y~.,data=df.temp)
+df.temp <- time.ts %>% dplyr::select(-c(subject_id,time))
+yhat <- predict(pca.lm, df.temp)
+sqrt((sum((z.tr$y-yhat)^2))/length(z.tr$y))
+```
+```{r}
+df.temp <- z.tr %>% dplyr::select(-c(subject_id))
+pca.lm <- lm(y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    z11 + z12 + z13 + z14 + z15 +
+    z16 + z17 + z18 + z19 + z20 +
+    time*(z1+z2+z3+z4+z5+z6+z7+z8+z9+z10+
+            z11+z12+z13+z14+z15),
+    data=df.temp)
+
+df.temp <- time.ts %>% dplyr::select(-c(subject_id))
+yhat <- predict(pca.lm, df.temp)
+sqrt((sum((z.tr$y-yhat)^2))/length(z.tr$y))
+```
+```{r}
+df.temp <- z.tr %>% dplyr::select(-c(subject_id))
+pca.lm <- lm(y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10,
+    data=df.temp)
+
+df.temp <- time.ts %>% dplyr::select(-c(subject_id))
+yhat <- predict(pca.lm, df.temp)
+sqrt((sum((z.tr$y-yhat)^2))/length(z.tr$y))
+```
+```{r}
+df.temp <- z.tr %>% dplyr::select(-c(subject_id))
+pca.lm <- lm(y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    z11 + z12 + z13 + z14 + z15 +
+    z16 + z17 + z18 + z19 + z20 +
+    z21 + z22 + z23 + z24 + z25 +
+    time*(z1+z2+z3+z4+z5+z6+z7+z8+z9+z10+
+            z11+z12+z13+z14+z15+z16+z17+
+            z18+z19+z20),
+    data=df.temp)
+
+df.temp <- time.ts %>% dplyr::select(-c(subject_id))
+yhat <- predict(pca.lm, df.temp)
+sqrt((sum((z.tr$y-yhat)^2))/length(z.tr$y))
+```
+
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    z11 + z12 + z13 + z14 + z15 +
+    z16 + z17 + z18 + z19 + z20 +
+    time*(z1+z2+z3+z4+z5+z6+z7+z8+z9+z10+
+            z11+z12+z13+z14+z15),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    z11 + z12 + z13 + z14 + z15 +
+    time*(z1+z2+z3+z4+z5+z6+z7+z8+z9+z10+
+            z11+z12+z13+z14+z15),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    z11 + z12 + z13 + z14 + z15 +
+    time*(z1+z2+z3+z4+z5+z6+z7+z8+z9+z10),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    time*(z1+z2+z3+z4+z5+z6+z7+z8+z9+z10),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    time*(z1+z2+z3+z4+z5),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    time*(z1+z2+z3+z4),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    time*(z1+z2+z3),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    time*(z1+z2),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    time*(z1),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + 
+    time*(z1+z2+z3+z4+z5),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + 
+    time*(z1+z2),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + 
+    time*(z1),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+## PCA LMM
+
+```{r}
+n.comp <- 30
+df.gene2.tr <- df.gene2 %>% filter(specimen_id %in% tr.spec$specimen_id) 
+df.gene2.ts <- df.gene2 %>% filter(specimen_id %in% ts.spec$specimen_id)
+
+df.tot2.tr <- dplyr::left_join(Y.tr, df.spec.tr, by="specimen_id") %>%
+              dplyr::left_join(., df.ab.tr, by="specimen_id") %>% 
+              dplyr::left_join(., df.cyt.tr, by="specimen_id") %>%
+              dplyr::left_join(., df.cell.tr, by="specimen_id") %>%
+              dplyr::left_join(., df.gene2.tr, by="specimen_id") 
+
+
+df.tot2.ts <- dplyr::left_join(Y.ts, df.spec.ts, by="specimen_id") %>%
+              dplyr::left_join(., df.ab.ts, by="specimen_id") %>% 
+              dplyr::left_join(., df.cyt.ts, by="specimen_id") %>%
+              dplyr::left_join(., df.cell.ts, by="specimen_id") %>%
+              dplyr::left_join(., df.gene2.ts, by="specimen_id") 
+
+
+tr.time.0 <- df.tot2.tr %>% filter(timepoint==0)
+tr.time.1 <- df.tot2.tr %>% filter(timepoint==1)
+tr.time.3 <- df.tot2.tr %>% filter(timepoint==3)
+ts.time.0 <- df.tot2.ts %>% filter(timepoint==0)
+ts.time.1 <- df.tot2.ts %>% filter(timepoint==1)
+ts.time.3 <- df.tot2.ts %>% filter(timepoint==3)
+
+X.0 <- tr.time.0 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+xmeans <- colMeans(X.0)
+X.0 <- t(apply(X.0, 1, function(x) x-xmeans)) %>% as.matrix()
+subj.0 <- tr.time.0$subject_id
+Xts <- ts.time.0 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+Xts <- t(apply(Xts, 1, function(x) x-xmeans)) %>% as.matrix()
+Y.0 <- tr.time.0$y %>% log2(.) %>% as.matrix()
+Yts <- ts.time.3$y %>% log2(.) %>% as.matrix()
+subj.ts <- ts.time.0$subject_id 
+X.1 <- tr.time.1 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+X.1 <- scale(X.1, center = T, scale=F) %>% as.matrix()
+subj.1 <- tr.time.1$subject_id
+Y.1 <- tr.time.1$y %>% log2(.) %>% as.matrix()
+X.3 <- tr.time.3 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+X.3 <- scale(X.3, center = T, scale=F) %>% as.matrix()
+subj.3 <- tr.time.3$subject_id
+Y.3 <- tr.time.3$y %>% log2(.) %>% as.matrix()
+
+pc.t.0 <- prcomp(X.0)
+pc20.t.0 <- pc.t.0$rotation[,1:n.comp]
+pc.t.1 <- prcomp(X.1)
+pc20.t.1 <- pc.t.1$rotation[,1:n.comp]
+pc.t.3 <- prcomp(X.3)
+pc20.t.3 <- pc.t.3$rotation[,1:n.comp]
+
+Z.0 <- as.matrix(X.0)%*%as.matrix(pc20.t.0)
+time.0 <- data.frame(Y.0,Z.0)
+colnames(time.0) <- c("y", paste0("z",1:n.comp))
+time.0$subject_id <- subj.0
+time.0$time <- 0
+Z.1 <- as.matrix(X.1)%*%as.matrix(pc20.t.1)
+time.1 <- data.frame(Y.1,Z.1)
+colnames(time.1) <- c("y", paste0("z",1:n.comp))
+time.1$subject_id <- subj.1
+time.1$time <- 1
+Z.3 <- as.matrix(X.3)%*%as.matrix(pc20.t.3)
+time.3 <- data.frame(Y.3,Z.3)
+colnames(time.3) <- c("y", paste0("z",1:n.comp))
+time.3$subject_id <- subj.3
+time.3$time <- 3
+z.tr <- rbind(time.0,time.1,time.3)
+z.tr$subject_id <- as.factor(z.tr$subject_id)
+
+z.0 <- as.matrix(Xts)%*%as.matrix(pc20.t.0)
+time.ts <- data.frame(Yts,z.0)
+colnames(time.ts) <- c("y", paste0("z",1:n.comp))
+time.ts$subject_id <- subj.ts
+time.ts$time <- 0
+```
+
+
+```{r}
+df.temp <- z.tr %>% dplyr::select(-c(subject_id,time))
+pca.lm <- lm(y~.,data=df.temp)
+df.temp <- time.ts %>% dplyr::select(-c(subject_id,time))
+yhat <- predict(pca.lm, df.temp)
+sqrt((sum((z.tr$y-yhat)^2))/length(z.tr$y))
+```
+
+```{r}
+df.temp <- z.tr %>% dplyr::select(-c(subject_id))
+pca.lm <- lm(y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10,
+    data=df.temp)
+
+df.temp <- time.ts %>% dplyr::select(-c(subject_id))
+yhat <- predict(pca.lm, df.temp)
+sqrt((sum((z.tr$y-yhat)^2))/length(z.tr$y))
+```
+```{r}
+df.temp <- z.tr %>% dplyr::select(-c(subject_id))
+pca.lm <- lm(y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 +
+    z11 + z12 + z13 + z14 + z15,
+    data=df.temp)
+
+df.temp <- time.ts %>% dplyr::select(-c(subject_id))
+yhat <- predict(pca.lm, df.temp)
+sqrt((sum((z.tr$y-yhat)^2))/length(z.tr$y))
+```
+```{r}
+df.temp <- z.tr %>% dplyr::select(-c(subject_id))
+pca.lm <- lm(y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 +
+    z11 + z12 + z13 + z14 + z15 +
+    z16 + z17 + z18 + z19 + z20,
+    data=df.temp)
+
+df.temp <- time.ts %>% dplyr::select(-c(subject_id))
+yhat <- predict(pca.lm, df.temp)
+sqrt((sum((z.tr$y-yhat)^2))/length(z.tr$y))
+```
+
+```{r}
+df.temp <- z.tr %>% dplyr::select(-c(subject_id))
+pca.lm <- lm(y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    z11 + z12 + z13 + z14 + z15 +
+    z16 + z17 + z18 + z19 + z20 +
+    time*(z1+z2+z3+z4+z5+z6+z7+z8+z9+z10+
+            z11+z12+z13+z14+z15),
+    data=df.temp)
+
+df.temp <- time.ts %>% dplyr::select(-c(subject_id))
+yhat <- predict(pca.lm, df.temp)
+sqrt((sum((z.tr$y-yhat)^2))/length(z.tr$y))
+```
+
+```{r}
+df.temp <- z.tr %>% dplyr::select(-c(subject_id))
+pca.lm <- lm(y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 +
+    time*(z1+z2+z3+z4+z5+z6+z7+z8+z9+z10),
+    data=df.temp)
+
+df.temp <- time.ts %>% dplyr::select(-c(subject_id))
+yhat <- predict(pca.lm, df.temp)
+sqrt((sum((z.tr$y-yhat)^2))/length(z.tr$y))
+```
+```{r}
+df.temp <- z.tr %>% dplyr::select(-c(subject_id))
+pca.lm <- lm(y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 +
+    time*(z1+z2+z3+z4+z5+z6+z7),
+    data=df.temp)
+
+df.temp <- time.ts %>% dplyr::select(-c(subject_id))
+yhat <- predict(pca.lm, df.temp)
+sqrt((sum((z.tr$y-yhat)^2))/length(z.tr$y))
+```
+
+```{r}
+df.temp <- z.tr %>% dplyr::select(-c(subject_id))
+pca.lm <- lm(y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 +
+    time*(z1+z2+z3+z4+z5),
+    data=df.temp)
+
+df.temp <- time.ts %>% dplyr::select(-c(subject_id))
+yhat <- predict(pca.lm, df.temp)
+sqrt((sum((z.tr$y-yhat)^2))/length(z.tr$y))
+```
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+                      z1 + z2 + z3 + z4 + z5 +
+                       z6 + z7 + z8 + z9 + z10 + 
+                       z11 + z12 + z13 + z14 + z15 +
+                       z16 + z17 + z18 + z19 + z20 +
+                       time*(z1+z2+z3+z4+z5+z6+z7+z8+z9+z10+
+                               z11+z12+z13+z14+z15+z16+z17+z18+
+                               z19+z20),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+                      z1 + z2 + z3 + z4 + z5 +
+                       z6 + z7 + z8 + z9 + z10 + 
+                       z11 + z12 + z13 + z14 + z15 +
+                       z16 + z17 + z18 + z19 + z20 +
+                       time*(z1+z2+z3+z4+z5+z6+z7+z8+z9+z10),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+                      z1 + z2 + z3 + z4 + z5 +
+                       z6 + z7 + z8 + z9 + z10 + 
+                       z11 + z12 + z13 + z14 + z15 +
+                       time*(z1+z2+z3+z4+z5+z6+z7+z8+z9+z10),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+                      z1 + z2 + z3 + z4 + z5 +
+                       z6 + z7 + z8 + z9 + z10 + 
+                       time*(z1+z2+z3+z4+z5+z6+z7+z8+z9+z10),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+                      z1 + z2 + z3 + z4 + z5 +
+                       z6 + z7 + z8 + z9 + z10 + 
+                       time*(z1+z2+z3+z4+z5+z6+z7+z8),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+                      z1 + z2 + z3 + z4 + z5 +
+                       z6 + z7 + z8 + z9 + z10 + 
+                       time*(z1+z2+z3+z4+z5+z6+z7),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+                      z1 + z2 + z3 + z4 + z5 +
+                       z6 + z7 + z8 + z9 + z10 + 
+                       time*(z1+z2+z3+z4+z5+z6),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    time*(z1+z2+z3+z4+z5),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    time*(z1+z2+z3+z4),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    time*(z1+z2+z3),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    time*(z1+z2),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    time*(z1),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + 
+    time*(z1+z2+z3),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + 
+    time*(z1+z2+z3),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + 
+    time*(z1+z2+z3),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+```{r}
+n.comp <- 30
+df.gene2.tr <- df.gene2 %>% filter(specimen_id %in% tr.spec$specimen_id) 
+df.gene2.ts <- df.gene2 %>% filter(specimen_id %in% ts.spec$specimen_id)
+
+df.tot2.tr <- dplyr::left_join(Y.tr, df.spec.tr, by="specimen_id") %>%
+              dplyr::left_join(., df.ab.tr, by="specimen_id") %>% 
+              dplyr::left_join(., df.cyt.tr, by="specimen_id") %>%
+              dplyr::left_join(., df.cell.tr, by="specimen_id") %>%
+              dplyr::left_join(., df.gene2.tr, by="specimen_id") 
+
+
+df.tot2.ts <- dplyr::left_join(Y.ts, df.spec.ts, by="specimen_id") %>%
+              dplyr::left_join(., df.ab.ts, by="specimen_id") %>% 
+              dplyr::left_join(., df.cyt.ts, by="specimen_id") %>%
+              dplyr::left_join(., df.cell.ts, by="specimen_id") %>%
+              dplyr::left_join(., df.gene2.ts, by="specimen_id") 
+
+
+tr.time.0 <- df.tot2.tr %>% filter(timepoint==0)
+tr.time.1 <- df.tot2.tr %>% filter(timepoint==1)
+tr.time.3 <- df.tot2.tr %>% filter(timepoint==3)
+tr.time.7 <- df.tot2.tr %>% filter(timepoint==7)
+tr.time.14 <- df.tot2.tr %>% filter(timepoint==14)
+ts.time.0 <- df.tot2.ts %>% filter(timepoint==0)
+ts.time.1 <- df.tot2.ts %>% filter(timepoint==1)
+ts.time.3 <- df.tot2.ts %>% filter(timepoint==3)
+ts.time.7 <- df.tot2.ts %>% filter(timepoint==7)
+ts.time.14 <- df.tot2.ts %>% filter(timepoint==14)
+
+X.0 <- tr.time.0 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+xmeans <- colMeans(X.0)
+X.0 <- t(apply(X.0, 1, function(x) x-xmeans)) %>% as.matrix()
+subj.0 <- tr.time.0$subject_id
+Xts <- ts.time.0 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+Xts <- t(apply(Xts, 1, function(x) x-xmeans)) %>% as.matrix()
+Y.0 <- tr.time.0$y %>% log2(.) %>% as.matrix()
+Yts <- ts.time.3$y %>% log2(.) %>% as.matrix()
+subj.ts <- ts.time.0$subject_id 
+X.1 <- tr.time.1 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+X.1 <- scale(X.1, center = T, scale=F) %>% as.matrix()
+subj.1 <- tr.time.1$subject_id
+Y.1 <- tr.time.1$y %>% log2(.) %>% as.matrix()
+X.3 <- tr.time.3 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+X.3 <- scale(X.3, center = T, scale=F) %>% as.matrix()
+subj.3 <- tr.time.3$subject_id
+Y.3 <- tr.time.3$y %>% log2(.) %>% as.matrix()
+X.7 <- tr.time.7 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+X.7 <- scale(X.7, center = T, scale=F) %>% as.matrix()
+subj.7 <- tr.time.7$subject_id
+Y.7 <- tr.time.7$y %>% log2(.) %>% as.matrix()
+X.14 <- tr.time.14 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+X.14 <- scale(X.14, center = T, scale=F) %>% as.matrix()
+subj.14 <- tr.time.14$subject_id
+Y.14 <- tr.time.14$y %>% log2(.) %>% as.matrix()
+
+pc.t.0 <- prcomp(X.0)
+pc20.t.0 <- pc.t.0$rotation[,1:n.comp]
+pc.t.1 <- prcomp(X.1)
+pc20.t.1 <- pc.t.1$rotation[,1:n.comp]
+pc.t.3 <- prcomp(X.3)
+pc20.t.3 <- pc.t.3$rotation[,1:n.comp]
+pc.t.7 <- prcomp(X.7)
+pc20.t.7 <- pc.t.7$rotation[,1:n.comp]
+pc.t.14 <- prcomp(X.14)
+pc20.t.14 <- pc.t.3$rotation[,1:n.comp]
+
+Z.0 <- as.matrix(X.0)%*%as.matrix(pc20.t.0)
+time.0 <- data.frame(Y.0,Z.0)
+colnames(time.0) <- c("y", paste0("z",1:n.comp))
+time.0$subject_id <- subj.0
+time.0$time <- 0
+Z.1 <- as.matrix(X.1)%*%as.matrix(pc20.t.1)
+time.1 <- data.frame(Y.1,Z.1)
+colnames(time.1) <- c("y", paste0("z",1:n.comp))
+time.1$subject_id <- subj.1
+time.1$time <- 1
+Z.3 <- as.matrix(X.3)%*%as.matrix(pc20.t.3)
+time.3 <- data.frame(Y.3,Z.3)
+colnames(time.3) <- c("y", paste0("z",1:n.comp))
+time.3$subject_id <- subj.3
+time.3$time <- 3
+Z.7 <- as.matrix(X.7)%*%as.matrix(pc20.t.7)
+time.7 <- data.frame(Y.7,Z.7)
+colnames(time.7) <- c("y", paste0("z",1:n.comp))
+time.7$subject_id <- subj.7
+time.7$time <- 7
+Z.14 <- as.matrix(X.14)%*%as.matrix(pc20.t.14)
+time.14 <- data.frame(Y.14,Z.14)
+colnames(time.14) <- c("y", paste0("z",1:n.comp))
+time.14$subject_id <- subj.14
+time.14$time <- 14
+z.tr <- rbind(time.0,time.1,time.3,time.7,time.14)
+z.tr$subject_id <- as.factor(z.tr$subject_id)
+
+z.0 <- as.matrix(Xts)%*%as.matrix(pc20.t.0)
+time.ts <- data.frame(Yts,z.0)
+colnames(time.ts) <- c("y", paste0("z",1:n.comp))
+time.ts$subject_id <- subj.ts
+time.ts$time <- 0
+```
+
+```{r}
+df.temp <- z.tr %>% dplyr::select(-c(subject_id,time))
+pca.lm <- lm(y~.,data=df.temp)
+df.temp <- time.ts %>% dplyr::select(-c(subject_id,time))
+yhat <- predict(pca.lm, df.temp)
+sqrt((sum((z.tr$y-yhat)^2))/length(z.tr$y))
+```
+
+```{r}
+df.temp <- z.tr %>% dplyr::select(-c(subject_id))
+pca.lm <- lm(y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10,
+    data=df.temp)
+
+df.temp <- time.ts %>% dplyr::select(-c(subject_id))
+yhat <- predict(pca.lm, df.temp)
+sqrt((sum((z.tr$y-yhat)^2))/length(z.tr$y))
+```
+```{r}
+df.temp <- z.tr %>% dplyr::select(-c(subject_id))
+pca.lm <- lm(y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 +
+    z11 + z12 + z13 + z14 + z15,
+    data=df.temp)
+
+df.temp <- time.ts %>% dplyr::select(-c(subject_id))
+yhat <- predict(pca.lm, df.temp)
+sqrt((sum((z.tr$y-yhat)^2))/length(z.tr$y))
+```
+```{r}
+df.temp <- z.tr %>% dplyr::select(-c(subject_id))
+pca.lm <- lm(y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 +
+    z11 + z12 + z13 + z14 + z15 +
+    z16 + z17 + z18 + z19 + z20,
+    data=df.temp)
+
+df.temp <- time.ts %>% dplyr::select(-c(subject_id))
+yhat <- predict(pca.lm, df.temp)
+sqrt((sum((z.tr$y-yhat)^2))/length(z.tr$y))
+```
+
+```{r}
+df.temp <- z.tr %>% dplyr::select(-c(subject_id))
+pca.lm <- lm(y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    z11 + z12 + z13 + z14 + z15 +
+    z16 + z17 + z18 + z19 + z20 +
+    time*(z1+z2+z3+z4+z5+z6+z7+z8+z9+z10+
+            z11+z12+z13+z14+z15),
+    data=df.temp)
+
+df.temp <- time.ts %>% dplyr::select(-c(subject_id))
+yhat <- predict(pca.lm, df.temp)
+sqrt((sum((z.tr$y-yhat)^2))/length(z.tr$y))
+```
+
+```{r}
+df.temp <- z.tr %>% dplyr::select(-c(subject_id))
+pca.lm <- lm(y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 +
+    time*(z1+z2+z3+z4+z5+z6+z7+z8+z9+z10),
+    data=df.temp)
+
+df.temp <- time.ts %>% dplyr::select(-c(subject_id))
+yhat <- predict(pca.lm, df.temp)
+sqrt((sum((z.tr$y-yhat)^2))/length(z.tr$y))
+```
+```{r}
+df.temp <- z.tr %>% dplyr::select(-c(subject_id))
+pca.lm <- lm(y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 +
+    time*(z1+z2+z3+z4+z5+z6+z7),
+    data=df.temp)
+
+df.temp <- time.ts %>% dplyr::select(-c(subject_id))
+yhat <- predict(pca.lm, df.temp)
+sqrt((sum((z.tr$y-yhat)^2))/length(z.tr$y))
+```
+
+```{r}
+df.temp <- z.tr %>% dplyr::select(-c(subject_id))
+pca.lm <- lm(y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 +
+    time*(z1+z2+z3+z4+z5),
+    data=df.temp)
+
+df.temp <- time.ts %>% dplyr::select(-c(subject_id))
+yhat <- predict(pca.lm, df.temp)
+sqrt((sum((z.tr$y-yhat)^2))/length(z.tr$y))
+```
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+                      z1 + z2 + z3 + z4 + z5 +
+                       z6 + z7 + z8 + z9 + z10 + 
+                       z11 + z12 + z13 + z14 + z15 +
+                       z16 + z17 + z18 + z19 + z20 +
+                       time*(z1+z2+z3+z4+z5+z6+z7+z8+z9+z10+
+                               z11+z12+z13+z14+z15+z16+z17+z18+
+                               z19+z20),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+                      z1 + z2 + z3 + z4 + z5 +
+                       z6 + z7 + z8 + z9 + z10 + 
+                       z11 + z12 + z13 + z14 + z15 +
+                       z16 + z17 + z18 + z19 + z20 +
+                       time*(z1+z2+z3+z4+z5+z6+z7+z8+z9+z10),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+                      z1 + z2 + z3 + z4 + z5 +
+                       z6 + z7 + z8 + z9 + z10 + 
+                       z11 + z12 + z13 + z14 + z15 +
+                       time*(z1+z2+z3+z4+z5+z6+z7+z8+z9+z10),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+                      z1 + z2 + z3 + z4 + z5 +
+                       z6 + z7 + z8 + z9 + z10 + 
+                       time*(z1+z2+z3+z4+z5+z6+z7+z8+z9+z10),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+                      z1 + z2 + z3 + z4 + z5 +
+                       z6 + z7 + z8 + z9 + z10 + 
+                       time*(z1+z2+z3+z4+z5+z6+z7+z8),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+                      z1 + z2 + z3 + z4 + z5 +
+                       z6 + z7 + z8 + z9 + z10 + 
+                       time*(z1+z2+z3+z4+z5+z6+z7),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+                      z1 + z2 + z3 + z4 + z5 +
+                       z6 + z7 + z8 + z9 + z10 + 
+                       time*(z1+z2+z3+z4+z5+z6),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    time*(z1+z2+z3+z4+z5),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    time*(z1+z2+z3+z4),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    time*(z1+z2+z3),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    time*(z1+z2),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    time*(z1),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + 
+    time*(z1+z2+z3),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + 
+    time*(z1+z2+z3),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+```{r}
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + 
+    time*(z1+z2+z3),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+```
+
+```{r}
+yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+fitted.err <- data.frame(time.ts$y, yhat.preds)
+colnames(fitted.err) <- c("y","yhat")
+#yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+```
+
+
+
+
+
+## SPCA LMM
+
+```{r}
+
+# df.gene2.tr <- df.gene2 %>% filter(specimen_id %in% tr.spec$specimen_id) 
+# df.gene2.ts <- df.gene2 %>% filter(specimen_id %in% ts.spec$specimen_id)
+# 
+# df.tot2.tr <- dplyr::left_join(Y.tr, df.spec.tr, by="specimen_id") %>%
+#               dplyr::left_join(., df.ab.tr, by="specimen_id") %>% 
+#               dplyr::left_join(., df.cyt.tr, by="specimen_id") %>%
+#               dplyr::left_join(., df.cell.tr, by="specimen_id") %>%
+#               dplyr::left_join(., df.gene2.tr, by="specimen_id") 
+# 
+# 
+# df.tot2.ts <- dplyr::left_join(Y.ts, df.spec.ts, by="specimen_id") %>%
+#               dplyr::left_join(., df.ab.ts, by="specimen_id") %>% 
+#               dplyr::left_join(., df.cyt.ts, by="specimen_id") %>%
+#               dplyr::left_join(., df.cell.ts, by="specimen_id") %>%
+#               dplyr::left_join(., df.gene2.ts, by="specimen_id") 
+# 
+# 
+# tr.time.0 <- df.tot2.tr %>% filter(timepoint==0)
+# tr.time.1 <- df.tot2.tr %>% filter(timepoint==1)
+# tr.time.3 <- df.tot2.tr %>% filter(timepoint==3)
+# ts.time.0 <- df.tot2.ts %>% filter(timepoint==0)
+# ts.time.1 <- df.tot2.ts %>% filter(timepoint==1)
+# ts.time.3 <- df.tot2.ts %>% filter(timepoint==3)
+# 
+# X.0 <- tr.time.0 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+# xmeans <- colMeans(X.0)
+# X.0 <- t(apply(X.0, 1, function(x) x-xmeans)) %>% as.matrix()
+# subj.0 <- tr.time.0$subject_id
+# Xts <- ts.time.0 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+# Xts <- t(apply(Xts, 1, function(x) x-xmeans)) %>% as.matrix()
+# Y.0 <- tr.time.0$y %>% log2(.) %>% as.matrix()
+# Yts <- ts.time.3$y %>% log2(.) %>% as.matrix()
+# subj.ts <- ts.time.0$subject_id 
+# X.1 <- tr.time.1 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+# X.1 <- scale(X.1, center = T, scale=F) %>% as.matrix()
+# subj.1 <- tr.time.1$subject_id
+# Y.1 <- tr.time.1$y %>% log2(.) %>% as.matrix()
+# X.3 <- tr.time.3 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+# X.3 <- scale(X.3, center = T, scale=F) %>% as.matrix()
+# subj.3 <- tr.time.3$subject_id
+# Y.3 <- tr.time.3$y %>% log2(.) %>% as.matrix()
+# 
+# pc.t.0 <- prcomp(X.0)
+# pc20.t.0 <- pc.t.0$rotation[,1:n.comp]
+# pc.t.1 <- prcomp(X.1)
+# pc20.t.1 <- pc.t.1$rotation[,1:n.comp]
+# pc.t.3 <- prcomp(X.3)
+# pc20.t.3 <- pc.t.3$rotation[,1:n.comp]
+# 
+# Z.0 <- as.matrix(X.0)%*%as.matrix(pc20.t.0)
+# time.0 <- data.frame(Y.0,Z.0)
+# colnames(time.0) <- c("y", paste0("z",1:n.comp))
+# time.0$subject_id <- subj.0
+# time.0$time <- 0
+# Z.1 <- as.matrix(X.1)%*%as.matrix(pc20.t.1)
+# time.1 <- data.frame(Y.1,Z.1)
+# colnames(time.1) <- c("y", paste0("z",1:n.comp))
+# time.1$subject_id <- subj.1
+# time.1$time <- 1
+# Z.3 <- as.matrix(X.3)%*%as.matrix(pc20.t.3)
+# time.3 <- data.frame(Y.3,Z.3)
+# colnames(time.3) <- c("y", paste0("z",1:n.comp))
+# time.3$subject_id <- subj.3
+# time.3$time <- 3
+# z.tr <- rbind(time.0,time.1,time.3)
+# z.tr$subject_id <- as.factor(z.tr$subject_id)
+# 
+# z.0 <- as.matrix(Xts)%*%as.matrix(pc20.t.0)
+# time.ts <- data.frame(Yts,z.0)
+# colnames(time.ts) <- c("y", paste0("z",1:n.comp))
+# time.ts$subject_id <- subj.ts
+# time.ts$time <- 0
+```
+
+```{r}
+library(foreach)
+library(doParallel)
+library(nlme)
+library(sparsepca)
+```
+
+```{r}
+sparse.vec <- seq(from=0, to=0.001, by=0.0001)
+rmse.vec <- rep(0, length(sparse.vec))
+#sparse.vec[1] <- 1e-04
+n.comp <- 10
+
+cs <- makeCluster(10)
+registerDoParallel(cs)
+
+  library(tidyverse)
+  tr.spec <- readRDS("tr_spec.RDS")
+  ts.spec <- readRDS("ts_spec.RDS")
+  df.gene2 <- readRDS("df_gene2.RDS")
+  df.spec.tr <- readRDS("df_spec_tr.RDS")
+  df.ab.tr <- readRDS("df_ab_tr.RDS")
+  df.cyt.tr <- readRDS("df_cyt_tr.RDS")
+  df.cell.tr <- readRDS("df_cell_tr.RDS")
+  df.spec.ts <- readRDS("df_spec_ts.RDS")
+  df.ab.ts <- readRDS("df_ab_ts.RDS")
+  df.cyt.ts <- readRDS("df_cyt_ts.RDS")
+  df.cell.ts <- readRDS("df_cell_ts.RDS")
+  Y.tr <- readRDS("Y_tr.RDS")
+  Y.ts <- readRDS("Y_ts.RDS")
+  gen.nam <- readRDS("gen_nam.RDS")
+
+#foreach(i=1:length(sparse.vec)) %dopar% {
+for(i in 1:length(sparse.vec)){ 
+  cat("Setting: ", i, ", sparse settings ", sparse.vec[i], "\n")
+  df.gene2.tr <- df.gene2 %>% filter(specimen_id %in% tr.spec$specimen_id) 
+  df.gene2.ts <- df.gene2 %>% filter(specimen_id %in% ts.spec$specimen_id)
+  
+  df.tot2.tr <- dplyr::left_join(Y.tr, df.spec.tr, by="specimen_id") %>%
+                dplyr::left_join(., df.ab.tr, by="specimen_id") %>% 
+                dplyr::left_join(., df.cyt.tr, by="specimen_id") %>%
+                dplyr::left_join(., df.cell.tr, by="specimen_id") %>%
+                dplyr::left_join(., df.gene2.tr, by="specimen_id") 
+  
+  
+  df.tot2.ts <- dplyr::left_join(Y.ts, df.spec.ts, by="specimen_id") %>%
+                dplyr::left_join(., df.ab.ts, by="specimen_id") %>% 
+                dplyr::left_join(., df.cyt.ts, by="specimen_id") %>%
+                dplyr::left_join(., df.cell.ts, by="specimen_id") %>%
+                dplyr::left_join(., df.gene2.ts, by="specimen_id") 
+  
+  
+  tr.time.0 <- df.tot2.tr %>% filter(timepoint==0)
+  tr.time.1 <- df.tot2.tr %>% filter(timepoint==1)
+  tr.time.3 <- df.tot2.tr %>% filter(timepoint==3)
+  ts.time.0 <- df.tot2.ts %>% filter(timepoint==0)
+  ts.time.1 <- df.tot2.ts %>% filter(timepoint==1)
+  ts.time.3 <- df.tot2.ts %>% filter(timepoint==3)
+  
+  X.0 <- tr.time.0 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+  xmeans <- colMeans(X.0)
+  X.0 <- t(apply(X.0, 1, function(x) x-xmeans)) %>% as.matrix()
+  subj.0 <- tr.time.0$subject_id
+  Xts <- ts.time.0 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+  Xts <- t(apply(Xts, 1, function(x) x-xmeans)) %>% as.matrix()  
+  Y.0 <- tr.time.0$y %>% log2(.) %>% as.matrix()
+  Yts <- ts.time.3$y %>% log2(.) %>% as.matrix()
+  subj.ts <- ts.time.0$subject_id 
+  X.1 <- tr.time.1 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+  X.1 <- scale(X.1, center = T, scale=F) %>% as.matrix()
+  subj.1 <- tr.time.1$subject_id
+  Y.1 <- tr.time.1$y %>% log2(.) %>% as.matrix()
+  X.3 <- tr.time.3 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+  X.3 <- scale(X.3, center = T, scale=F) %>% as.matrix()
+  subj.3 <- tr.time.3$subject_id
+  Y.3 <- tr.time.3$y %>% log2(.) %>% as.matrix()
+  
+  alpha.param <- sparse.vec[i]
+  
+  pc.t.0 <- sparsepca::spca(as.matrix(X.0), k=n.comp, alpha=alpha.param)
+  pc20.t.0 <- as.matrix(pc.t.0$loadings)
+  pc.t.1 <- sparsepca::spca(as.matrix(X.1), k=n.comp, alpha=alpha.param)
+  pc20.t.1 <- as.matrix(pc.t.1$loadings)
+  pc.t.3 <- sparsepca::spca(as.matrix(X.3), k=n.comp, alpha=alpha.param)
+  pc20.t.3 <- as.matrix(pc.t.3$loadings)
+  
+  Z.0 <- as.matrix(X.0)%*%as.matrix(pc20.t.0)
+  time.0 <- data.frame(Y.0,Z.0)
+  colnames(time.0) <- c("y", paste0("z",1:n.comp))
+  time.0$subject_id <- subj.0
+  time.0$time <- 0
+  Z.1 <- as.matrix(X.1)%*%as.matrix(pc20.t.1)
+  time.1 <- data.frame(Y.1,Z.1)
+  colnames(time.1) <- c("y", paste0("z",1:n.comp))
+  time.1$subject_id <- subj.1
+  time.1$time <- 1
+  Z.3 <- as.matrix(X.3)%*%as.matrix(pc20.t.3)
+  time.3 <- data.frame(Y.3,Z.3)
+  colnames(time.3) <- c("y", paste0("z",1:n.comp))
+  time.3$subject_id <- subj.3
+  time.3$time <- 3
+  z.tr <- rbind(time.0,time.1,time.3)
+  z.tr$subject_id <- as.factor(z.tr$subject_id)
+  
+  z.0 <- as.matrix(Xts)%*%as.matrix(pc20.t.0)
+  time.ts <- data.frame(Yts,z.0)
+  colnames(time.ts) <- c("y", paste0("z",1:n.comp))
+  time.ts$subject_id <- subj.ts
+  time.ts$time <- 0
+  
+  lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    time*(z1+z2+z3+z4+z5),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+  ylmepred <- readRDS("ylmepred.RDS")
+  right_rows <- readRDS("right_rows.RDS")
+  yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+  yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+  fitted.err <- data.frame(time.ts$y, yhat.preds)
+  colnames(fitted.err) <- c("y","yhat")
+  #yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+  rmse.temp <- sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+  rmse.vec[i] <- rmse.temp
+}
+
+temp.df <- data.frame(sparse.vec, rmse.vec)
+```
+
+```{r}
+sparse.vec <- seq(from=0, to=0.001, by=0.0001)
+rmse.vec <- rep(0, length(sparse.vec))
+#sparse.vec[1] <- 1e-04
+n.comp <- 10
+
+cs <- makeCluster(10)
+registerDoParallel(cs)
+
+  library(tidyverse)
+  tr.spec <- readRDS("tr_spec.RDS")
+  ts.spec <- readRDS("ts_spec.RDS")
+  df.gene2 <- readRDS("df_gene2.RDS")
+  df.spec.tr <- readRDS("df_spec_tr.RDS")
+  df.ab.tr <- readRDS("df_ab_tr.RDS")
+  df.cyt.tr <- readRDS("df_cyt_tr.RDS")
+  df.cell.tr <- readRDS("df_cell_tr.RDS")
+  df.spec.ts <- readRDS("df_spec_ts.RDS")
+  df.ab.ts <- readRDS("df_ab_ts.RDS")
+  df.cyt.ts <- readRDS("df_cyt_ts.RDS")
+  df.cell.ts <- readRDS("df_cell_ts.RDS")
+  Y.tr <- readRDS("Y_tr.RDS")
+  Y.ts <- readRDS("Y_ts.RDS")
+  gen.nam <- readRDS("gen_nam.RDS")
+
+#foreach(i=1:length(sparse.vec)) %dopar% {
+for(i in 1:length(sparse.vec)){ 
+  cat("Setting: ", i, ", sparse settings ", sparse.vec[i], "\n")
+  df.gene2.tr <- df.gene2 %>% filter(specimen_id %in% tr.spec$specimen_id) 
+  df.gene2.ts <- df.gene2 %>% filter(specimen_id %in% ts.spec$specimen_id)
+  
+  df.tot2.tr <- dplyr::left_join(Y.tr, df.spec.tr, by="specimen_id") %>%
+                dplyr::left_join(., df.ab.tr, by="specimen_id") %>% 
+                dplyr::left_join(., df.cyt.tr, by="specimen_id") %>%
+                dplyr::left_join(., df.cell.tr, by="specimen_id") %>%
+                dplyr::left_join(., df.gene2.tr, by="specimen_id") 
+  
+  
+  df.tot2.ts <- dplyr::left_join(Y.ts, df.spec.ts, by="specimen_id") %>%
+                dplyr::left_join(., df.ab.ts, by="specimen_id") %>% 
+                dplyr::left_join(., df.cyt.ts, by="specimen_id") %>%
+                dplyr::left_join(., df.cell.ts, by="specimen_id") %>%
+                dplyr::left_join(., df.gene2.ts, by="specimen_id") 
+  
+  
+  tr.time.0 <- df.tot2.tr %>% filter(timepoint==0)
+  tr.time.1 <- df.tot2.tr %>% filter(timepoint==1)
+  tr.time.3 <- df.tot2.tr %>% filter(timepoint==3)
+  tr.time.7 <- df.tot2.tr %>% filter(timepoint==7)
+  tr.time.14 <- df.tot2.tr %>% filter(timepoint==14)
+  ts.time.0 <- df.tot2.ts %>% filter(timepoint==0)
+  ts.time.1 <- df.tot2.ts %>% filter(timepoint==1)
+  ts.time.3 <- df.tot2.ts %>% filter(timepoint==3)
+  ts.time.7 <- df.tot2.ts %>% filter(timepoint==7)
+  ts.time.14 <- df.tot2.ts %>% filter(timepoint==14)
+  
+  X.0 <- tr.time.0 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+  xmeans <- colMeans(X.0)
+  X.0 <- t(apply(X.0, 1, function(x) x-xmeans)) %>% as.matrix()
+  subj.0 <- tr.time.0$subject_id
+  Xts <- ts.time.0 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+  Xts <- t(apply(Xts, 1, function(x) x-xmeans)) %>% as.matrix()  
+  Y.0 <- tr.time.0$y %>% log2(.) %>% as.matrix()
+  Yts <- ts.time.3$y %>% log2(.) %>% as.matrix()
+  subj.ts <- ts.time.0$subject_id 
+  X.1 <- tr.time.1 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+  X.1 <- scale(X.1, center = T, scale=F) %>% as.matrix()
+  subj.1 <- tr.time.1$subject_id
+  Y.1 <- tr.time.1$y %>% log2(.) %>% as.matrix()
+  X.3 <- tr.time.3 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+  X.3 <- scale(X.3, center = T, scale=F) %>% as.matrix()
+  subj.3 <- tr.time.3$subject_id
+  Y.3 <- tr.time.3$y %>% log2(.) %>% as.matrix()
+  X.7 <- tr.time.7 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+  X.7 <- scale(X.7, center = T, scale=F) %>% as.matrix()
+  subj.7 <- tr.time.7$subject_id
+  Y.7 <- tr.time.7$y %>% log2(.) %>% as.matrix()
+  X.14 <- tr.time.14 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+  X.14 <- scale(X.14, center = T, scale=F) %>% as.matrix()
+  subj.14 <- tr.time.14$subject_id
+  Y.14 <- tr.time.14$y %>% log2(.) %>% as.matrix()
+  
+  
+  alpha.param <- sparse.vec[i]
+  
+  pc.t.0 <- sparsepca::spca(as.matrix(X.0), k=n.comp, alpha=alpha.param)
+  pc20.t.0 <- as.matrix(pc.t.0$loadings)
+  pc.t.1 <- sparsepca::spca(as.matrix(X.1), k=n.comp, alpha=alpha.param)
+  pc20.t.1 <- as.matrix(pc.t.1$loadings)
+  pc.t.3 <- sparsepca::spca(as.matrix(X.3), k=n.comp, alpha=alpha.param)
+  pc20.t.3 <- as.matrix(pc.t.3$loadings)
+  pc.t.7 <- sparsepca::spca(as.matrix(X.7), k=n.comp, alpha=alpha.param)
+  pc20.t.7 <- as.matrix(pc.t.7$loadings)
+  pc.t.14 <- sparsepca::spca(as.matrix(X.14), k=n.comp, alpha=alpha.param)
+  pc20.t.14 <- as.matrix(pc.t.14$loadings)
+  
+  Z.0 <- as.matrix(X.0)%*%as.matrix(pc20.t.0)
+  time.0 <- data.frame(Y.0,Z.0)
+  colnames(time.0) <- c("y", paste0("z",1:n.comp))
+  time.0$subject_id <- subj.0
+  time.0$time <- 0
+  Z.1 <- as.matrix(X.1)%*%as.matrix(pc20.t.1)
+  time.1 <- data.frame(Y.1,Z.1)
+  colnames(time.1) <- c("y", paste0("z",1:n.comp))
+  time.1$subject_id <- subj.1
+  time.1$time <- 1
+  Z.3 <- as.matrix(X.3)%*%as.matrix(pc20.t.3)
+  time.3 <- data.frame(Y.3,Z.3)
+  colnames(time.3) <- c("y", paste0("z",1:n.comp))
+  time.3$subject_id <- subj.3
+  time.3$time <- 3
+  Z.7 <- as.matrix(X.7)%*%as.matrix(pc20.t.7)
+  time.7 <- data.frame(Y.7,Z.7)
+  colnames(time.7) <- c("y", paste0("z",1:n.comp))
+  time.7$subject_id <- subj.7
+  time.7$time <- 7
+  Z.14 <- as.matrix(X.14)%*%as.matrix(pc20.t.14)
+  time.14 <- data.frame(Y.14,Z.14)
+  colnames(time.14) <- c("y", paste0("z",1:n.comp))
+  time.14$subject_id <- subj.14
+  time.14$time <- 14
+  z.tr <- rbind(time.0,time.1,time.3,time.7,time.14)
+  z.tr$subject_id <- as.factor(z.tr$subject_id)
+  
+  z.0 <- as.matrix(Xts)%*%as.matrix(pc20.t.0)
+  time.ts <- data.frame(Yts,z.0)
+  colnames(time.ts) <- c("y", paste0("z",1:n.comp))
+  time.ts$subject_id <- subj.ts
+  time.ts$time <- 0
+  
+  lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    time*(z1+z2+z3+z4+z5),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+  ylmepred <- readRDS("ylmepred.RDS")
+  right_rows <- readRDS("right_rows.RDS")
+  yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+  yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+  fitted.err <- data.frame(time.ts$y, yhat.preds)
+  colnames(fitted.err) <- c("y","yhat")
+  #yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+  rmse.temp <- sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+  rmse.vec[i] <- rmse.temp
+}
+
+temp.df <- data.frame(sparse.vec, rmse.vec)
+```
+
+## Sparse PLS LMM
+
+```{r}
+sparse.vec <- seq(from=1, to=500, by=1)
+rmse.vec <- rep(0, length(sparse.vec))
+#sparse.vec[1] <- 10
+n.comp <- 10
+
+cs <- makeCluster(10)
+registerDoParallel(cs)
+
+  library(tidyverse)
+  tr.spec <- readRDS("tr_spec.RDS")
+  ts.spec <- readRDS("ts_spec.RDS")
+  df.gene2 <- readRDS("df_gene2.RDS")
+  df.spec.tr <- readRDS("df_spec_tr.RDS")
+  df.ab.tr <- readRDS("df_ab_tr.RDS")
+  df.cyt.tr <- readRDS("df_cyt_tr.RDS")
+  df.cell.tr <- readRDS("df_cell_tr.RDS")
+  df.spec.ts <- readRDS("df_spec_ts.RDS")
+  df.ab.ts <- readRDS("df_ab_ts.RDS")
+  df.cyt.ts <- readRDS("df_cyt_ts.RDS")
+  df.cell.ts <- readRDS("df_cell_ts.RDS")
+  Y.tr <- readRDS("Y_tr.RDS")
+  Y.ts <- readRDS("Y_ts.RDS")
+  gen.nam <- readRDS("gen_nam.RDS")
+
+#foreach(i=1:length(sparse.vec)) %dopar% {
+for(i in 1:length(sparse.vec)){ 
+  cat("Setting: ", i, ", sparse settings ", sparse.vec[i], "\n")
+  df.gene2.tr <- df.gene2 %>% filter(specimen_id %in% tr.spec$specimen_id) 
+  df.gene2.ts <- df.gene2 %>% filter(specimen_id %in% ts.spec$specimen_id)
+  
+  df.tot2.tr <- dplyr::left_join(Y.tr, df.spec.tr, by="specimen_id") %>%
+                dplyr::left_join(., df.ab.tr, by="specimen_id") %>% 
+                dplyr::left_join(., df.cyt.tr, by="specimen_id") %>%
+                dplyr::left_join(., df.cell.tr, by="specimen_id") %>%
+                dplyr::left_join(., df.gene2.tr, by="specimen_id") 
+  
+  
+  df.tot2.ts <- dplyr::left_join(Y.ts, df.spec.ts, by="specimen_id") %>%
+                dplyr::left_join(., df.ab.ts, by="specimen_id") %>% 
+                dplyr::left_join(., df.cyt.ts, by="specimen_id") %>%
+                dplyr::left_join(., df.cell.ts, by="specimen_id") %>%
+                dplyr::left_join(., df.gene2.ts, by="specimen_id") 
+  
+  
+  tr.time.0 <- df.tot2.tr %>% filter(timepoint==0)
+  tr.time.1 <- df.tot2.tr %>% filter(timepoint==1)
+  tr.time.3 <- df.tot2.tr %>% filter(timepoint==3)
+  tr.time.7 <- df.tot2.tr %>% filter(timepoint==7)
+  tr.time.14 <- df.tot2.tr %>% filter(timepoint==14)
+  ts.time.0 <- df.tot2.ts %>% filter(timepoint==0)
+  ts.time.1 <- df.tot2.ts %>% filter(timepoint==1)
+  ts.time.3 <- df.tot2.ts %>% filter(timepoint==3)
+  ts.time.7 <- df.tot2.ts %>% filter(timepoint==7)
+  ts.time.14 <- df.tot2.ts %>% filter(timepoint==14)
+  
+  X.0 <- tr.time.0 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+  xmeans <- colMeans(X.0)
+  X.0 <- t(apply(X.0, 1, function(x) x-xmeans)) %>% as.matrix()
+  subj.0 <- tr.time.0$subject_id
+  Xts <- ts.time.0 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+  Xts <- t(apply(Xts, 1, function(x) x-xmeans)) %>% as.matrix()  
+  Y.0 <- tr.time.0$y %>% log2(.) %>% as.matrix()
+  Yts <- ts.time.3$y %>% log2(.) %>% as.matrix()
+  subj.ts <- ts.time.0$subject_id 
+  X.1 <- tr.time.1 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+  X.1 <- scale(X.1, center = T, scale=F) %>% as.matrix()
+  subj.1 <- tr.time.1$subject_id
+  Y.1 <- tr.time.1$y %>% log2(.) %>% as.matrix()
+  X.3 <- tr.time.3 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+  X.3 <- scale(X.3, center = T, scale=F) %>% as.matrix()
+  subj.3 <- tr.time.3$subject_id
+  Y.3 <- tr.time.3$y %>% log2(.) %>% as.matrix()
+  X.7 <- tr.time.7 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+  X.7 <- scale(X.7, center = T, scale=F) %>% as.matrix()
+  subj.7 <- tr.time.7$subject_id
+  Y.7 <- tr.time.7$y %>% log2(.) %>% as.matrix()
+  X.14 <- tr.time.14 %>% dplyr::select(all_of(gen.nam)) %>% as.matrix()
+  X.14 <- scale(X.14, center = T, scale=F) %>% as.matrix()
+  subj.14 <- tr.time.14$subject_id
+  Y.14 <- tr.time.14$y %>% log2(.) %>% as.matrix()
+  
+  
+  alpha.param <- sparse.vec[i]
+  
+  alpha.vec <- rep(alpha.param, n.comp)
+  
+  plsr.obj.0 <- spls(X=X.0,Y=Y.3,ncomp=n.comp, scale=F, mode="regression", keepX=alpha.vec)
+  plsr.obj.1 <- spls(X=X.1,Y=Y.3,ncomp=n.comp, scale=F, mode="regression", keepX=alpha.vec)
+  plsr.obj.3 <- spls(X=X.3,Y=Y.3,ncomp=n.comp, scale=F, mode="regression", keepX=alpha.vec)
+  plsr.obj.7 <- spls(X=X.7,Y=Y.3,ncomp=n.comp, scale=F, mode="regression", keepX=alpha.vec)
+  plsr.obj.14 <- spls(X=X.14,Y=Y.3,ncomp=n.comp, scale=F, mode="regression", keepX=alpha.vec)
+  
+  #pc.t.0 <- sparsepca::spca(as.matrix(X.0), k=n.comp, alpha=alpha.param)
+  pc20.t.0 <- as.matrix(plsr.obj.0$loadings$X)
+  #pc.t.1 <- sparsepca::spca(as.matrix(X.1), k=n.comp, alpha=alpha.param)
+  pc20.t.1 <- as.matrix(plsr.obj.1$loadings$X)
+  #pc.t.3 <- sparsepca::spca(as.matrix(X.3), k=n.comp, alpha=alpha.param)
+  pc20.t.3 <- as.matrix(plsr.obj.3$loadings$X)
+  #pc.t.7 <- sparsepca::spca(as.matrix(X.7), k=n.comp, alpha=alpha.param)
+  pc20.t.7 <- as.matrix(plsr.obj.7$loadings$X)
+  #pc.t.14 <- sparsepca::spca(as.matrix(X.14), k=n.comp, alpha=alpha.param)
+  pc20.t.14 <- as.matrix(plsr.obj.14$loadings$X)
+  
+  Z.0 <- as.matrix(X.0)%*%as.matrix(pc20.t.0)
+  time.0 <- data.frame(Y.0,Z.0)
+  colnames(time.0) <- c("y", paste0("z",1:n.comp))
+  time.0$subject_id <- subj.0
+  time.0$time <- 0
+  Z.1 <- as.matrix(X.1)%*%as.matrix(pc20.t.1)
+  time.1 <- data.frame(Y.1,Z.1)
+  colnames(time.1) <- c("y", paste0("z",1:n.comp))
+  time.1$subject_id <- subj.1
+  time.1$time <- 1
+  Z.3 <- as.matrix(X.3)%*%as.matrix(pc20.t.3)
+  time.3 <- data.frame(Y.3,Z.3)
+  colnames(time.3) <- c("y", paste0("z",1:n.comp))
+  time.3$subject_id <- subj.3
+  time.3$time <- 3
+  Z.7 <- as.matrix(X.7)%*%as.matrix(pc20.t.7)
+  time.7 <- data.frame(Y.7,Z.7)
+  colnames(time.7) <- c("y", paste0("z",1:n.comp))
+  time.7$subject_id <- subj.7
+  time.7$time <- 7
+  Z.14 <- as.matrix(X.14)%*%as.matrix(pc20.t.14)
+  time.14 <- data.frame(Y.14,Z.14)
+  colnames(time.14) <- c("y", paste0("z",1:n.comp))
+  time.14$subject_id <- subj.14
+  time.14$time <- 14
+  z.tr <- rbind(time.0,time.1,time.3,time.7,time.14)
+  z.tr$subject_id <- as.factor(z.tr$subject_id)
+  
+  z.0 <- as.matrix(Xts)%*%as.matrix(pc20.t.0)
+  time.ts <- data.frame(Yts,z.0)
+  colnames(time.ts) <- c("y", paste0("z",1:n.comp))
+  time.ts$subject_id <- subj.ts
+  time.ts$time <- 0
+  
+  lme.mod <- nlme::lme(fixed=y ~ 
+    z1 + z2 + z3 + z4 + z5 +
+    z6 + z7 + z8 + z9 + z10 + 
+    time*(z1),
+    random= ~ 1 | subject_id , data=z.tr, method="REML")
+  ylmepred <- readRDS("ylmepred.RDS")
+  right_rows <- readRDS("right_rows.RDS")
+  yhat <- ylmepred(lme.mod, newdata=time.ts, timeVar="time", interval =  "prediction", times = c(3,7))
+  yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+  fitted.err <- data.frame(time.ts$y, yhat.preds)
+  colnames(fitted.err) <- c("y","yhat")
+  #yhat.preds <- yhat$pred[c(1,3,5,7,9,11,13,15,17,19,21,23)]
+  rmse.temp <- sqrt((sum((fitted.err$y-fitted.err$yhat)^2))/length(fitted.err$y))
+  rmse.vec[i] <- rmse.temp
+}
+
+temp.df <- data.frame(sparse.vec, rmse.vec)
+```
+
+## MCAI
+
+### Prepare data matrix for MCIA model on 2020 data
+```{r}
+data_tr <- list(cyt=as.matrix(df.ab.tr),
+                cell=as.matrix(df.cell.tr),
+                seq=as.matrix(df.gene.tr),
+                ab=as.matrix(df.ab.tr))
+lapply(data_tr,dim)
+```
+
+### Run MCIA with 10 factors
+```{r}
+set.seed(0)
+num_comps=10
+mcia_out_gs<-mcia_mbpca(data_tr,num_comps=num_comps,preprocess='nsc',block_prep='lambda_all',
+                        deflat_method="globalScore") 
+```
+
+### Create lists of associated prediction tasks
+```{r}
+tasks_ab<-c('IgG.PT','IgG.FHA','IgG.PRN','IgG1.PT','IgG1.FHA','IgG1.PRN','IgG4.PT','IgG4.FHA','IgG4.PRN')
+tasks_cytof<-c('Monocytes','ASCs..Plasmablasts.','CD4Tcells')
+tasks_seq<-c('ENSG00000277632','ENSG00000136244','ENSG00000100906','ENSG00000229807')
+```
+
+### Add demographic and baseline features to MCIA factor model to create MCIAplus model
+```{r}
+gs_2020_temp = mcia_out_gs$mcia_result$t
+gs_2020<-data.frame(gs_2020_temp)
+gs_2020$age<-meta.2020[rownames(gs_2020),"age_at_boost"]
+gs_2020$infancy_vac<-as.numeric(meta.2020[rownames(gs_2020),'infancy_vac'])
+gs_2020$biological_sex<-as.numeric(meta.2020[rownames(gs_2020),'biological_sex'])
+
+n_cols = dim(gs_2020)[2]
+gs_2020[,(n_cols+1):(n_cols+length(tasks_ab))]<-abtiters_baseline_mat_imputed_20[rownames(gs_2020),tasks_ab]
+colnames(gs_2020)[(n_cols+1):(n_cols+length(tasks_ab))]<-tasks_ab
+
+n_cols = dim(gs_2020)[2]
+gs_2020[,(n_cols+1):(n_cols+length(tasks_seq))]<-rnaseq_baseline_mat_imputed_20[rownames(gs_2020),tasks_seq]
+colnames(gs_2020)[(n_cols+1):(n_cols+length(tasks_seq))]<-tasks_seq
+
+n_cols = dim(gs_2020)[2]
+gs_2020[,(n_cols+1):(n_cols+length(tasks_cytof))]<-cytof_baseline_mat_imputed_20[rownames(gs_2020),tasks_cytof]
+colnames(gs_2020)[(n_cols+1):(n_cols+length(tasks_cytof))]<-tasks_cytof
+
+```
+
+### Test model quality
+Analyze correlation between predicted and true values in leave-one-out cross-validation assay
+```{r, message=FALSE}
+# pred_cor<-data.frame(matrix(nrow=ncol(task_mat),ncol=1))
+# rownames(pred_cor)<-colnames(task_mat)
+# colnames(pred_cor)<-c('cor.pred.true')
+# # Loop through all tasks
+# for (i in 1:ncol(task_mat)){
+#   all_preds<-c()
+#   all_true<-c()
+#   set.seed(1)
+#   
+#   x_out <-data.frame(task_mat[,i])
+#   rownames(x_out)<-rownames(task_mat)
+#   x_out$temp<-'temp'
+#   names(x_out)<-c('Y','temp')
+#   x_out_r<-na.omit(x_out)
+#   row_int<-intersect(rownames(x_out_r),rownames(gs_2020))
+#   x_out_r<-x_out_r[row_int,]
+#   gs_2020_filt<-gs_2020[rownames(x_out_r),]
+#   #train = 1:nrow(gs_2020_filt)
+#   
+#   # train all leave-one-out models
+#   for (j in 1:nrow(gs_2020_filt)){
+#     train = 1:nrow(gs_2020_filt)
+#     train = train[-c(j)]
+#   
+#     # create lasso model
+#     cvfit_out<-cv.glmnet(x=as.matrix(gs_2020_filt[train,]), x_out_r[train,'Y'], family='gaussian',
+#                          alpha=1,nfolds=nrow(gs_2020_filt[train,]-1)) 
+#     preds<-predict(cvfit_out,newx=as.matrix(data.frame(gs_2020_filt[-train,])),s='lambda.min')
+#     all_preds<-c(all_preds,preds)
+#     all_true<-c(all_true,x_out_r[-train,'Y']) 
+#   }
+#   pred_cor[i,'cor.pred.true']<-cor(all_preds,all_true) # Can also use spearman correlation
+# }
+# print(pred_cor)
+```
+
+### For each model, can assess which features contribute to non-zero coefficients
+Consider only choosing models for follow-on analysis that show good correlation scores
+```{r, message=FALSE}
+all_models_coef<-vector(mode='list',length=14)
+all_models_names<-vector(mode='list',length=14)
+all_models<-vector(mode='list',length=14)
+for (i in 1:14){
+  set.seed(1)
+  x_out <-data.frame(task_mat[,i])
+  rownames(x_out)<-rownames(task_mat)
+  x_out$temp<-'temp'
+  names(x_out)<-c('Y','temp')
+  x_out_r<-na.omit(x_out)
+  row_int<-intersect(rownames(x_out_r),rownames(gs_2020))
+  x_out_r<-x_out_r[row_int,]
+  gs_2020_filt<-gs_2020[rownames(x_out_r),]
+  
+  
+  # create lasso model
+  cvfit_out<-cv.glmnet(x=as.matrix(gs_2020_filt), y=as.matrix(x_out_r[,'Y']), family='gaussian',
+                         alpha=1,nfolds=nrow(gs_2020_filt-1)) 
+  all_models_coef[i]=list(coef(cvfit_out, s = 'lambda.min')[coef(cvfit_out, s = 'lambda.min')[,1]!= 0])
+  all_models_names[i]=list(rownames(coef(cvfit_out, s = 'lambda.min'))[coef(cvfit_out, s = 'lambda.min')[,1]!= 0])
+}
+names(all_models_coef)<-colnames(task_mat)
+names(all_models_names)<-colnames(task_mat)
+
+for (i in 1:14){
+  all_models[[i]] = data.frame(cbind(all_models_names[[i]],all_models_coef[[i]]))
+  colnames(all_models[[i]])<-c("Variable","Coefficient")
+  all_models[[i]]$Coefficient<-as.numeric(all_models[[i]]$Coefficient)
+  all_models[[i]]$Coefficient=round(all_models[[i]]$Coefficient,3)
+}
+names(all_models)<-colnames(task_mat)
+
+for (i in 1:14){
+  all_models[[i]]$Variable[all_models[[i]]$Variable==tasks_seq[1]]="CCL3"
+  all_models[[i]]$Variable[all_models[[i]]$Variable==tasks_seq[2]]="IL6"
+  all_models[[i]]$Variable[all_models[[i]]$Variable==tasks_seq[3]]="NFKBIA"
+  all_models[[i]]$Variable[all_models[[i]]$Variable==tasks_seq[4]]="XIST"
+  all_models[[i]]<-all_models[[i]] %>% arrange(desc(abs(Coefficient)))
+}
+
+all_models[1]
+
+all_models_df = enframe(all_models)
+
+
+```
+
+
+### 2021
+### Generate global scores on 2021 data using 2020 model
+
+```{r}
+#preprocess2021 data
+num_comps=10
+block_prep_use = 'lambda_all'
+data_2021<-list(cytof=t(cytof_baseline_mat_imputed_21), 
+                seq=t(rnaseq_baseline_mat_imputed_21),
+                olink=t(olink_baseline_mat_imputed_21),
+                abtiters=t(abtiters_baseline_mat_imputed_21))
+
+table_out<-nsc_prep(data_2021, num_comps)
+final_out<-processOpt(table_out,scale=FALSE,center=FALSE,num_comps,option=block_prep_use)
+
+# generate 2021 global scores using 2020 models
+gs_2021_temp=new_gs(final_out,mcia_out_gs$mcia_result)
+rownames(gs_2021_temp)<-rownames(meta.2021)
+gs_2021<-data.frame(gs_2021_temp)
+
+# Add demographic variables to 2021 MCIA global scores
+gs_2021$age<-meta.2021[rownames(gs_2021),"age_at_boost"]
+gs_2021$infancy_vac<-as.numeric(meta.2021[rownames(gs_2021),'infancy_vac'])
+gs_2021$biological_sex<-as.numeric(meta.2021[rownames(gs_2021),'biological_sex'])
+
+# Add day 0 values of tasks to 2021 MCIA global scores to make 2021 'MCIAplus' model
+n_cols = dim(gs_2021)[2]
+gs_2021[,(n_cols+1):(n_cols+length(tasks_ab))]<-abtiters_baseline_mat_imputed_21[rownames(gs_2021),tasks_ab]
+colnames(gs_2021)[(n_cols+1):(n_cols+length(tasks_ab))]<-tasks_ab
+
+n_cols = dim(gs_2021)[2]
+gs_2021[,(n_cols+1):(n_cols+length(tasks_seq))]<-rnaseq_baseline_mat_imputed_21[rownames(gs_2021),tasks_seq]
+colnames(gs_2021)[(n_cols+1):(n_cols+length(tasks_seq))]<-tasks_seq
+
+n_cols = dim(gs_2021)[2]
+gs_2021[,(n_cols+1):(n_cols+length(tasks_cytof))]<-cytof_baseline_mat_imputed_21[rownames(gs_2021),tasks_cytof]
+colnames(gs_2021)[(n_cols+1):(n_cols+length(tasks_cytof))]<-tasks_cytof
+
+```
+
+
+### Generate predictions for 2021 tasks
+```{r}
+library(omicade4)
+library(mogsa)
+source('https://raw.githubusercontent.com/akonstodata/mcia_mbpca/main/R/MCIA_mbpca_extra.R')
+```
+
+
+```{r}
+
+# initiate matrices
+val_predict<-data.frame(matrix(nrow = nrow(gs_2021), ncol=ncol(task_mat)))
+rank_predict<-data.frame(matrix(nrow=nrow(gs_2021),ncol=ncol(task_mat)))
+rownames(rank_predict)<-rownames(val_predict)<-rownames(gs_2021)
+colnames(rank_predict)<-colnames(val_predict)<-colnames(task_mat)
+
+# If results of 2020 CV testing were poor, make predictions based on day 0 values
+#val_predict$IgG.FHA_day14<-gs_2021$IgG.FHA
+#val_predict$IgG.PRN_day14<-gs_2021$IgG.PRN
+#val_predict$IgG1.FHA_day14<-gs_2021$IgG1.FHA
+#val_predict$Monocytes_day1<-gs_2021$Monocytes
+#val_predict$ASCs..Plasmablasts._day7<-gs_2021$ASCs..Plasmablasts.
+#val_predict$CD4Tcells_day3<-gs_2021$CD4Tcells
+
+# If results of 2020 CV testing were good, use MCIA2021 model to make predictions
+set.seed(1)
+#for (i in c(1,4,6,7,11,12,13,14)){  # choose variables here which to predict with model vs. with day 0 values
+for (i in 1:ncol(task_mat)){  # choose variables here which to predict with model vs. with day 0 values
+  
+  print(colnames(task_mat)[i])
+  x_out <-data.frame(task_mat[,i])
+  rownames(x_out)<-rownames(task_mat)
+  x_out$temp<-'temp'
+  names(x_out)<-c('Y','temp')
+  x_out_r<-na.omit(x_out)
+  row_int<-intersect(rownames(x_out_r),rownames(gs_2020))
+  x_out_r<-x_out_r[row_int,]
+  gs_2020_filt<-gs_2020[rownames(x_out_r),]
+  
+  # create lasso model using 2020 data
+  cvfit_out<-cv.glmnet(x=as.matrix(gs_2020_filt), x_out_r$Y, family='gaussian',
+                        alpha=1,nfolds=nrow(gs_2020_filt),type.measure="mse") 
+  
+  
+  # make predictions on 2021 data
+  preds<-data.frame(predict(cvfit_out,newx=as.matrix(gs_2021),s='lambda.min'))
+  val_predict[,i]<-preds
+}
+
+```
+
+### Modify predictions to 'NA' where original data had 'NA'
+```{r}
+val_predict[c("61","62","75"),c("Monocytes_day1","ASCs..Plasmablasts._day7","CD4Tcells_day3")]<-NaN
+val_predict[c("82","87","88"),1:7]<-NaN
+for (i in 1:14){
+  rank_predict[,i]<-rank(-val_predict[,i],na.last="keep",ties.method="min")
+}
+```
+
+### Clean up presentation to fit template
+```{r}
+rank_predict_reord<-colnames(rank_predict)
+rank_predict_reord[8:10]<-c(rank_predict_reord[9],rank_predict_reord[10],rank_predict_reord[8])
+rank_predict_out<-rank_predict[,rank_predict_reord]
+
+write.table(rank_predict_out,'MCIAplus_2020_preds_062123.tsv',sep='\t')
+```
+
+
+
+
+

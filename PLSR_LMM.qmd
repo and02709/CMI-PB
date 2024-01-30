@@ -1,0 +1,331 @@
+---
+title: "PLSR LMM"
+format: html
+editor: visual
+---
+
+## packages
+
+```{r}
+library(tidyverse)
+library(pls)
+```
+
+```{r}
+library(tidyverse)
+master_processed_data <- readRDS("master_processed_training_data.RDS")
+df.spec <- data.frame(master_processed_data$subject_specimen)
+df.ab <- master_processed_data$abtiter_wide$batchCorrected_data
+#df.ab.col <- colnames(df.ab) |> as.numeric()
+df.ab.col <- colnames(df.ab)
+df.ab <- t(data.frame(df.ab))
+rownames(df.ab) <- df.ab.col
+df.cyt <- master_processed_data$plasma_cytokine_concentrations$batchCorrected_data
+df.cyt.col <- colnames(df.cyt) 
+df.cyt <- t(data.frame(df.cyt))
+rownames(df.cyt) <- df.cyt.col
+df.cell <- master_processed_data$pbmc_cell_frequency$batchCorrected_data
+df.cell.col <- colnames(df.cell) 
+df.cell <- t(data.frame(df.cell))
+rownames(df.cell) <- df.cell.col
+df.gene <- master_processed_data$pbmc_gene_expression$batchCorrected_data
+df.gene.col <- colnames(df.gene) 
+df.gene <- t(data.frame(df.gene))
+rownames(df.gene) <- df.gene.col
+gene.names <- colnames(df.gene)
+gene.names <- sub('ENSG','\\1',gene.names)
+which(gene.names=="00000277632.1")
+gene.names[which(gene.names=="00000277632.1")]
+X <- data.frame(df.gene) %>% dplyr::select(-ENSG00000277632.1) %>% mutate(specimen_id=rownames(df.gene))
+Y <- data.frame(df.gene) %>% dplyr::select(ENSG00000277632.1) %>% mutate(specimen_id=rownames(df.gene))
+specimen_id <- X$specimen_id
+X <- X %>% dplyr::select(-specimen_id)
+X <- scale(X, center=T, scale=T)
+X <- data.frame(specimen_id,X)
+colnames(Y) <- c("y", "specimen_id")
+df <- inner_join(X,Y,by="specimen_id")
+rownames(df) <- df$specimen_id
+df$specimen_id <- as.numeric(df$specimen_id)
+df.sets <- data.frame(master_processed_data$pbmc_gene_expression$metadata)
+rownames(df.sets) <- df.sets$specimen_id
+df.sets <- df.sets %>% mutate(age=interval(start=year_of_birth, end=date_of_boost)/duration(num=1, units="years"))
+df.sets <- df.sets %>% mutate(across(where(is.character), as.factor))
+#df.d3 <- df.sets %>% filter(planned_day_relative_to_boost==3)
+df.full.pred <- inner_join(df,df.sets,by="specimen_id")
+rownames(df.full.pred) <- df.full.pred$specimen_id
+#df.d3.tr <- df.d3 %>% filter(dataset != "2022_dataset")
+#df.d3.ts <- df.d3 %>% filter(dataset == "2022_dataset")
+df.sets.tr <- df.sets %>% filter(dataset != "2022_dataset")
+df.sets.ts <- df.sets %>% filter(dataset == "2022_dataset")
+# tr.set <- df.sets.tr %>% select(specimen_id)
+# ts.set <- df.sets.ts %>% select(specimen_id)
+df <- df.full.pred
+x.rem <- c(colnames(df.sets),"y")
+subj <- unique(df.sets.tr$subject_id)
+need.to.include <- df.sets.tr %>% filter(race %in% c("American Indian/Alaska Native", "Black or African American", "Native Hawaiian or Other Pacific Islander")) %>% dplyr::select(subject_id) %>% unique() %>% as.matrix()
+#need.to.include <- df.sets.tr %>% filter(race %in% c("American Indian/Alaska Native", "Black or African American", "Native Hawaiian or Other Pacific Islander")) %>% select(subject_id) %>% unique() %>% as.matrix()
+subj.acceptable <- setdiff(subj,need.to.include)
+tr.subj <- sample(subj.acceptable,55)
+tr.subj <- append(tr.subj,need.to.include)
+ts.subj <- setdiff(subj,tr.subj)
+dftrain <- df %>% filter(subject_id %in% tr.subj)
+X <- dftrain %>% dplyr::select(-x.rem)
+Y <- dftrain %>% dplyr::select(y) %>% log2()
+dftest <- df %>% filter(subject_id %in% ts.subj)
+Xts <- dftest %>% dplyr::select(-x.rem)
+Yts <- dftest %>% dplyr::select(y) %>% log2()
+x.cols <- colnames(X)
+xmeans <- colMeans(X)
+X <- t(apply(X, 1, function(x) x-xmeans))
+Xts <- t(apply(Xts, 1, function(x) x-xmeans))
+
+```
+
+```{r}
+library(mixOmics)
+```
+
+```{r}
+plsr.obj <- pls(X=X,Y=Y,ncomp=50, scale=F, mode="regression")
+Z <- X%*%as.matrix(plsr.obj$loadings$X)
+z <- Xts%*%as.matrix(plsr.obj$loadings$X)
+Z.df <- data.frame(Y,Z)
+z.df <- data.frame(Yts,z)
+Z.df$specimen_id <- as.numeric(rownames(Z.df))
+z.df$specimen_id <- as.numeric(rownames(z.df))
+meta.df <- df.sets %>% dplyr::select(specimen_id, subject_id, planned_day_relative_to_boost, infancy_vac, biological_sex, ethnicity, race, age, timepoint)
+meta.df$timepoint <- as.factor(meta.df$timepoint)
+meta.df$subject_id <- as.factor(meta.df$subject_id)
+meta.df$planned_day_relative_to_boost <- as.factor(meta.df$planned_day_relative_to_boost)
+train.df <- inner_join(Z.df, meta.df, by="specimen_id")
+test.df <- inner_join(z.df, meta.df, by="specimen_id")
+lmer.mod <- lme4::lmer(y ~ comp1 + comp2 + comp3 + comp4 + comp5 + comp6 + comp7 + comp8 + 
+    comp9 + comp10 + comp11 + comp12 + comp13 + comp14 + comp15 + 
+    comp16 + comp17 + comp18 + comp19 + comp20 + comp21 + comp22 + 
+    comp23 + comp24 + comp25 + comp26 + comp27 + comp28 + comp29 + 
+    comp30 + comp31 + comp32 + comp33 + comp34 + comp35 + comp36 + 
+    comp37 + comp38 + comp39 + comp40 + comp41 + comp42 + comp43 + 
+    comp44 + comp45 + comp46 + comp47 + comp48 + comp49 + comp50 +
+      infancy_vac + biological_sex + ethnicity + race + age + 
+      ( 1 | subject_id) + (1 | planned_day_relative_to_boost), data=train.df)
+
+yhat <- predict(lmer.mod, test.df)
+```
+
+## lme and Jmbayes
+
+
+```{r}
+plsr.obj <- pls(X=X,Y=Y,ncomp=30, scale=F, mode="regression")
+Z <- X%*%as.matrix(plsr.obj$loadings$X)
+z <- Xts%*%as.matrix(plsr.obj$loadings$X)
+Z.df <- data.frame(Y,Z)
+z.df <- data.frame(Yts,z)
+Z.df$specimen_id <- as.numeric(rownames(Z.df))
+z.df$specimen_id <- as.numeric(rownames(z.df))
+meta.df <- df.sets %>% dplyr::select(specimen_id, subject_id, planned_day_relative_to_boost, infancy_vac, biological_sex, ethnicity, race, age, timepoint)
+#meta.df$timepoint <- as.factor(meta.df$timepoint) %>% droplevels()
+meta.df$subject_id <- as.factor(meta.df$subject_id)
+meta.df$planned_day_relative_to_boost <- as.factor(meta.df$planned_day_relative_to_boost)
+train.df <- inner_join(Z.df, meta.df, by="specimen_id") 
+test.df <- inner_join(z.df, meta.df, by="specimen_id") 
+
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+                       comp1 + comp2 + comp3 + comp4 + comp5 + 
+                       comp6 + comp7 + comp8 + comp9 + comp10 + 
+                       comp11 + comp12 + comp13 + comp14 + comp15 +
+                       comp16 + comp17 + comp18 + comp19 + comp20 + 
+                       comp21 + comp22 + comp23 + comp24 + comp25 +
+                       comp26 + comp27 + comp28 + comp29 + comp30 + 
+                       infancy_vac + biological_sex + ethnicity + 
+                       race  + age + timepoint, 
+    random= ~ 1 + timepoint| subject_id ,data=train.df, method="REML")
+```
+
+```{r}
+library(JMbayes)
+temp.test <- test.df %>% filter(timepoint == 0)
+yhat <- ylmepred(lme.mod, newdata=temp.test, timeVar="timepoint", interval =  "prediction", times = c(3,7,14))
+
+```
+
+```{r}
+fitted.err <- data.frame(temp.test$y, yhat$fit)
+colnames(fitted.err) <- c("y", "yhat")
+sqrt(mean((fitted.err$y-fitted.err$yhat)^2))
+```
+
+```{r}
+y_3 <- test.df %>% filter(timepoint==3) %>% select(y) %>% as.vector()
+yhat_3 <- yhat$pred[c(1,4,7,10, 13,16,19,22,25, 28, 31, 34)]
+pred.y <- data.frame(y_3,yhat_3)
+colnames(pred.y) <- c("y", "yhat")
+sqrt(sum((y_3-yhat_3)^2)/12)
+with(fitted.err, plot(yhat,y))
+with(pred.y, plot(yhat,y))
+```
+```{r}
+plsr.obj <- pls(X=X,Y=Y,ncomp=30, scale=F, mode="regression")
+Z <- X%*%as.matrix(plsr.obj$loadings$X)
+z <- Xts%*%as.matrix(plsr.obj$loadings$X)
+Z.df <- data.frame(Y,Z)
+z.df <- data.frame(Yts,z)
+Z.df$specimen_id <- as.numeric(rownames(Z.df))
+z.df$specimen_id <- as.numeric(rownames(z.df))
+meta.df <- df.sets %>% dplyr::select(specimen_id, subject_id, planned_day_relative_to_boost, infancy_vac, biological_sex, ethnicity, race, age, timepoint)
+#meta.df$timepoint <- as.factor(meta.df$timepoint) %>% droplevels()
+meta.df$subject_id <- as.factor(meta.df$subject_id)
+meta.df$planned_day_relative_to_boost <- as.factor(meta.df$planned_day_relative_to_boost)
+train.df <- inner_join(Z.df, meta.df, by="specimen_id") 
+test.df <- inner_join(z.df, meta.df, by="specimen_id") 
+
+library(nlme)
+lme.mod <- nlme::lme(fixed=y ~ 
+                       comp1 + comp2 + comp3 + comp4 + comp5 + 
+                       comp6 + comp7 + comp8 + comp9 + comp10 + 
+                       comp11 + comp12 + comp13 + comp14 + comp15 +
+                       comp16 + comp17 + comp18 + comp19 + comp20 + 
+                       comp21 + comp22 + comp23 + comp24 + comp25 +
+                       comp26 + comp27 + comp28 + comp29 + comp30 + 
+                       infancy_vac + biological_sex + ethnicity + 
+                       race  + age + timepoint, 
+    random= ~ 1 | subject_id ,data=train.df, method="REML")
+```
+
+```{r}
+library(JMbayes)
+temp.test <- test.df %>% filter(timepoint == 0)
+yhat <- ylmepred(lme.mod, newdata=temp.test, timeVar="timepoint", interval =  "prediction", times = c(3,7,14))
+dplyr::glimpse(test.df)
+train.df %>%
+  filter(timepoint < 4) %>% 
+  filter(as.numeric(subject_id) %in% c(9,  18, 27, 29, 10, 15, 20, 22)) %>%
+  ggplot(data=., mapping=aes(x=timepoint,y=y)) +
+  geom_point() +
+  geom_smooth(method="loess",se=FALSE) +
+  facet_wrap(~subject_id)
+```
+
+```{r}
+fitted.err <- data.frame(temp.test$y, yhat$fit)
+colnames(fitted.err) <- c("y", "yhat")
+sqrt(mean((fitted.err$y-fitted.err$yhat)^2))
+```
+
+```{r}
+y_3 <- test.df %>% filter(timepoint==3) %>% select(y) %>% as.vector()
+yhat_3 <- yhat$pred[c(1,4,7,10, 13,16,19,22,25, 28, 31, 34)]
+pred.y <- data.frame(y_3,yhat_3)
+colnames(pred.y) <- c("y", "yhat")
+sqrt(sum((y_3-yhat_3)^2)/12)
+with(fitted.err, plot(yhat,y))
+with(pred.y, plot(yhat,y))
+```
+
+```{r}
+ylmepred <- function (lmeObject, newdata, timeVar, times = NULL, M = 200L, 
+  interval = c("confidence", "prediction"), all_times = FALSE, 
+  level = 0.95, return_data = FALSE, seed = 1L) 
+{
+  if (!inherits(lmeObject, "lme") && !inherits(lmeObject, 
+    "lmeComponents")) 
+    stop("Use only with 'lme' or 'lmeComponents' objects.\n")
+  interval <- match.arg(interval)
+  if (inherits(lmeObject, "lme")) {
+    data <- lmeObject$data
+    formYx <- formula(lmeObject)
+    mfX <- model.frame(terms(formYx), data = data)
+    TermsX <- attr(mfX, "terms")
+    formYz <- formula(lmeObject$modelStruct$reStruct[[1]])
+    mfZ <- model.frame(terms(formYz), data = data)
+    TermsZ <- attr(mfZ, "terms")
+    idVar <- names(lmeObject$modelStruct$reStruct)
+    betas <- fixef(lmeObject)
+    sigma <- lmeObject$sigma
+    D <- lapply(pdMatrix(lmeObject$modelStruct$reStruct), 
+      "*", sigma^2)[[1]]
+    V <- vcov(lmeObject)
+    times_orig <- data[[timeVar]]
+    times_orig <- times_orig[!is.na(times_orig)]
+  }
+  else {
+    formYx <- lmeObject$formYx
+    TermsX <- lmeObject$TermsX
+    formYz <- lmeObject$formYz
+    TermsZ <- lmeObject$TermsZ
+    idVar <- lmeObject$idVar
+    betas <- lmeObject$betas
+    sigma <- lmeObject$sigma
+    D <- lmeObject$D
+    V <- lmeObject$V
+    times_orig <- lmeObject$times_orig
+  }
+  all_vars <- unique(c(all.vars(TermsX), all.vars(TermsZ)))
+  newdata_nomiss <- newdata[complete.cases(newdata[all_vars]), 
+    ]
+  mfX_new <- model.frame(TermsX, data = newdata_nomiss)
+  X_new <- model.matrix(formYx, mfX_new)
+  mfZ_new <- model.frame(TermsZ, data = newdata_nomiss)
+  Z_new <- model.matrix(formYz, mfZ_new)
+  na_ind <- attr(mfX_new, "na.action")
+  y_new <- model.response(mfX_new, "numeric")
+  if (length(idVar) > 1) 
+    stop("the current version of the function only works with a single grouping variable.\n")
+  if (is.null(newdata[[idVar]])) 
+    stop("subject id variable not in newdata.")
+  id_nomiss <- match(newdata_nomiss[[idVar]], unique(newdata_nomiss[[idVar]]))
+  n <- length(unique(id_nomiss))
+  modes <- matrix(0, n, ncol(Z_new))
+  post_vars <- DZtVinv <- vector("list", n)
+  for (i in seq_len(n)) {
+    id_i <- id_nomiss == i
+    X_new_id <- X_new[id_i, , drop = FALSE]
+    Z_new_id <- Z_new[id_i, , drop = FALSE]
+    Vi_inv <- solve(Z_new_id %*% tcrossprod(D, Z_new_id) + 
+      sigma^2 * diag(sum(id_i)))
+    DZtVinv[[i]] <- tcrossprod(D, Z_new_id) %*% Vi_inv
+    modes[i, ] <- c(DZtVinv[[i]] %*% (y_new[id_i] - X_new_id %*% 
+      betas))
+    t1 <- DZtVinv[[i]] %*% Z_new_id %*% D
+    t2 <- DZtVinv[[i]] %*% X_new_id %*% V %*% crossprod(X_new_id, 
+      Vi_inv) %*% Z_new_id %*% D
+    post_vars[[i]] <- D - t1 + t2
+  }
+  fitted_y <- c(X_new %*% betas) + rowSums(Z_new * modes[id_nomiss, 
+    , drop = FALSE])
+  if (is.null(times) || !is.numeric(times)) {
+    times <- seq(min(times_orig), max(times_orig), length.out = 100)
+  }
+  id <- match(newdata[[idVar]], unique(newdata[[idVar]]))
+  last_time <- tapply(newdata[[timeVar]], id, max)
+  times_to_pred <- lapply(last_time, function(t) if (all_times) 
+    times
+  else times[times > t])
+  id_pred <- rep(seq_len(n), sapply(times_to_pred, length))
+  newdata_pred <- right_rows(newdata, newdata[[timeVar]], 
+    id, times_to_pred)
+  newdata_pred[[timeVar]] <- unlist(times_to_pred)
+  mfX_new_pred <- model.frame(TermsX, data = newdata_pred, 
+    na.action = NULL)
+  X_new_pred <- model.matrix(formYx, mfX_new_pred)
+  mfZ_new_pred <- model.frame(TermsZ, data = newdata_pred, 
+    na.action = NULL)
+  Z_new_pred <- model.matrix(formYz, mfZ_new_pred)
+  predicted_y <- c(X_new_pred %*% betas) + rowSums(Z_new_pred * 
+    modes[id_pred, , drop = FALSE])
+  return(list(fit=fitted_y, pred=predicted_y))
+}
+
+right_rows <- function (data, times, ids, Q_points) {
+    fids <- factor(ids, levels = unique(ids))
+    if (!is.list(Q_points))
+        Q_points <- split(Q_points, row(Q_points))
+    ind <- mapply(findInterval, Q_points, split(times, fids))
+    ind[ind < 1] <- 1
+    rownams_id <- split(row.names(data), fids)
+    ind <- mapply(`[`, rownams_id, split(ind, col(ind)))
+    data[c(ind), ]
+}
+```
+
